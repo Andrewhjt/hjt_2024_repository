@@ -1,0 +1,26 @@
+// Return collection with all the images that match a string in an asset folder
+var assetsToCollection = function(folderPath, assetType, stringMatch){
+  // Filters in ee.data.listAssets are only applied to ImageCollection assets 
+  // and are ignored for Folder assets.
+  var list = ee.data.listAssets(folderPath, {view: 'BASIC'})['assets']
+  var ims = []
+  if (!list) {
+    list = []
+  }
+  for (var i = 0; i < list.length; i++ ) {
+    var id = list[i]['id']
+    if (id.indexOf(stringMatch) != -1) {
+      if (assetType == 'featureCollection'){
+        var im = ee.FeatureCollection(id).set('assetId',id)
+      } else if (assetType == 'Image'){
+        var im = ee.Image(id)
+      } else if (assetType == 'object'){
+        var im = id
+      }
+      ims.push(im)
+    }
+  }
+  return ims
+}
+
+exports.assetsToCollection = assetsToCollection

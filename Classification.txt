@@ -1,0 +1,110 @@
+// First load the API file
+var utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api')
+ 
+// Define a parameters
+var ccdVersion = 'v2'
+var metadataFilter = 'v5_'
+var bandNames = ["BLUE","GREEN","RED","NIR","SWIR1","SWIR2","TEMP"]
+var inputFeatures = ["INTP", "SLP","PHASE","AMPLITUDE","RMSE"]
+var ancillaryFeatures = ["ELEVATION","ASPECT","DEM_SLOPE","RAINFALL","TEMPERATURE"]
+var numberOfSegments = 6
+var classProperty = 'landcover'
+var trainProp = .2
+var seed = Math.ceil(Math.random() * 1000)
+var studyArea =  ee.Geometry.Polygon(
+        [[[-65.11727581440459, -8.755437491733284],
+          [-65.11727581440459, -13.240578578777912],
+          [-59.470303158154586, -13.240578578777912],
+          [-59.470303158154586, -8.755437491733284]]], null, false);
+var trainingDataPath = 'projects/GLANCE/TRAINING/MASTER/MAPBIOMAS_100K_POINTS_utf8_4_organized_MASTER'
+var classifier = ee.Classifier.smileRandomForest({
+  numberOfTrees: 150,
+  variablesPerSplit: null,
+  minLeafPopulation: 1,
+  bagFraction: 0.5,
+  maxNodes: null
+})
+
+// Get training data as FC
+var trainingData = ee.FeatureCollection(trainingDataPath)
+
+// Optionally filter by study area
+trainingData = trainingData.filterBounds(studyArea)
+
+// Obtain the version of CCDC
+var ccdcCollection = ee.ImageCollection("projects/CCDC/" + ccdVersion)
+
+// Filter an dmosaic the CCDC coefficients
+var ccdArray = ccdcCollection
+  .filterMetadata('system:index', 'starts_with',metadataFilter)
+  .filterBounds(studyArea)// Filter and mosaic the CCDC coefficients
+  .mosaic()
+
+
+// Next, turn array image into image
+var imageToClassify = utils.CCDC.buildCcdImage(ccdArray, numberOfSegments, bandNames)
+
+// Now get ancillary data
+var demImage = ee.Image('USGS/SRTMGL1_003').rename('ELEVATION')
+var slope = ee.Terrain.slope(demImage).rename('DEM_SLOPE')
+var aspect = ee.Terrain.aspect(demImage).rename('ASPECT')
+var bio = ee.Image('WORLDCLIM/V1/BIO')
+        .select(['bio01','bio12'])
+        .rename(['TEMPERATURE','RAINFALL'])
+var ancillary = ee.Image.cat([demImage, slope, aspect, bio])
+
+
+// Now do the actual classification add the first segments classification to the map
+
+var results = utils.Classification.classifySegments(
+    imageToClassify, numberOfSegments, bandNames, ancillary, ancillaryFeatures,
+    trainingData, classifier, studyArea, classProperty, inputFeatures)
+  .clip(studyArea)
+
+var viz = utils.Results.viz
+var legend = utils.Results.legend
+
+Map.addLayer(results.select(0), viz, 'Seg1 Classification')
+Map.add(legend)
+var class2000 = utils.Classification.getLcAtDate(results,
+        '2000-01-01',
+        numberOfSegments,
+        ccdVersion,
+        metadataFilter,
+        'after')
+
+var class2018 = utils.Classification.getLcAtDate(results,
+        '2018-01-01',
+        numberOfSegments,
+        ccdVersion,
+        metadataFilter,
+        'before')
+
+var deforestation = class2000.eq(5)
+        .and(class2018.neq(5))
+
+Map.addLayer(deforestation.selfMask(),
+        {palette: 'red'},
+        'Deforestation')
+
+var postDefClass = class2018.updateMask(deforestation)
+
+var viz = utils.Results.viz
+
+Map.addLayer(postDefClass,
+        viz,
+        'Post-Deforestation Class')
+
+var regrowth = class2000.neq(5).and(class2000.neq(0))
+        .and(class2018.eq(5))
+
+Map.addLayer(regrowth.selfMask(),
+        {palette: 'lightgreen'},
+        'Regrowth')
+
+var newWater =  class2000.neq(1).and(class2000.neq(0))
+        .and(class2018.eq(1))
+      
+Map.addLayer(newWater.selfMask(),
+        {palette: 'Cyan'},
+        'Water')

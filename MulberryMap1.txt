@@ -1,0 +1,62 @@
+import pandas as pd
+from pyecharts.charts import Sankey
+from pyecharts import options as opts
+import os
+from pyecharts.charts import Pie, Bar, Map, Page, Funnel
+
+
+def get_data(df):
+    nodes = []
+    for i in range(2):
+        vales = df.iloc[:, i].unique()
+        for value in vales:
+            dic = {}
+            dic['name'] = value
+            nodes.append(dic)
+
+    nodes1 = []
+    for id in nodes:
+        if id not in nodes1:
+            nodes1.append(id)
+    # print(nodes1)
+
+    links = []
+    for i in df.values:
+        dic = {}
+        dic['source'] = i[0]
+        dic['target'] = i[1]
+        dic['value'] = i[2]
+        links.append(dic)
+    return nodes1, links
+
+
+# print(links)
+def get_tu(tablename, df):
+    nodes1, links = get_data(df)
+    sankey = (
+        Sankey(init_opts=opts.InitOpts(width="2000px", height="800px"))
+        .add(
+            tablename,
+            nodes1,
+            links,
+            pos_top="10%",
+            node_width=30,  # 每个桑基图矩形的宽度
+            node_gap=16,  # 桑基图中每一列任意两个矩形节点之间的间隔。
+            is_draggable=True,
+            layout_iterations=5,
+
+            # focus_node_adjacency=True,
+            itemstyle_opts=opts.ItemStyleOpts(border_width=2, border_color="#aaa"),
+            linestyle_opt=opts.LineStyleOpts(opacity=0.8, curve=0.5, color='source'),
+            label_opts=opts.LabelOpts(position='right', font_size=30),  # 设置文字大小为20
+        )
+        .set_global_opts(title_opts=opts.TitleOpts(title="用户路径分析"))
+    )
+    return sankey
+
+
+
+file = r'E:\GraduationProject\result1.xlsx'
+df_0826 = pd.read_excel(file, sheet_name='result')
+sk1 = get_tu('tets', df_0826)
+sk1.render(r'C:\Users\Administrator\Desktop\test1.html')

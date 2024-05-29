@@ -1,0 +1,28 @@
+
+// Load example parameter file and utilities
+var utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api')
+var params = require('users/parevalo_bu/gee-ccdc-tools:Tutorial/params.js')
+
+// Get input data
+var imageToClassify = utils.Classification.loadResults(params.Classification.resultFormat, 
+  params.Classification.changeResults,params.StudyRegion)
+var ancillary = utils.Inputs.getAncillary()
+var trainingData = ee.FeatureCollection(params.Classification.trainingPath)
+
+// Classification parameters
+var ancillaryFeatures = params.Classification.ancillaryFeatures
+var bands = params.Classification.bandNames 
+var coefs = params.Classification.coefs
+var segs = params.Classification.segs
+var studyArea = params.StudyRegion
+var inputFeatures = params.Classification.inputFeatures
+var classProperty = params.Classification.classProperty
+
+var classifier = params.Classification.classifier(params.Classification.classifierParams)
+
+var results = utils.Classification.classifySegments(
+    imageToClassify, segs.length, bands, ancillary, ancillaryFeatures,
+    trainingData, classifier, studyArea, classProperty, inputFeatures)
+  .clip(studyArea)
+
+print(results)

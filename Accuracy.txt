@@ -1,0 +1,55 @@
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, accuracy_score, cohen_kappa_score
+
+# 读取数据
+data = pd.read_excel(r'E:\GraduationProject\Accuracy\Accuracy2020.xlsx')
+
+# 计算混淆矩阵并获取整体精度和Kappa系数
+cm = confusion_matrix(data['reclass2020'], data[2020])
+overall_accuracy = accuracy_score(data['reclass2020'], data[2020])
+overall_kappa = cohen_kappa_score(data['reclass2020'], data[2020])
+
+# 计算每一类的精度
+class_accuracy = cm.diagonal() / cm.sum(axis=1)
+
+# 类别标签
+class_labels = ['Water', 'Building', 'Bareland', 'Forest', 'Grassland', 'Cropland']
+
+# 设置字体大小
+sns.set(font_scale=1.5)  # 设置整体字体大小
+
+# 绘制整体精度和Kappa系数
+plt.figure(figsize=(14, 7))
+plt.subplot(1, 2, 1)  # 1行2列的第1个
+sns.heatmap(cm, annot=True, fmt='g', cmap='YlGnBu', annot_kws={"size": 20})  # 设置注释字体大小
+plt.title('Confusion Matrix')
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+
+plt.subplot(1, 2, 2)  # 1行2列的第2个
+metrics = ['Overall Accuracy', 'Kappa Coefficient']
+values = [overall_accuracy, overall_kappa]
+sns.barplot(x=metrics, y=values)
+plt.title('Overall Metrics')
+plt.ylim(0, 1)
+
+# 为整体指标每个条形添加文本标签
+for i, value in enumerate(values):
+    plt.text(i, value, f'{value:.2f}', ha='center', va='bottom', fontsize=20)  # 设置文本标签字体大小
+
+plt.tight_layout()
+plt.show()
+
+# 绘制每一类的精度
+plt.figure(figsize=(10, 5))
+sns.barplot(x=class_labels, y=class_accuracy[:len(class_labels)])
+plt.title('Accuracy by Class')
+plt.ylim(0, 1)
+
+# 为每类精度的条形添加文本标签
+for i, value in enumerate(class_accuracy[:len(class_labels)]):
+    plt.text(i, value, f'{value:.2f}', ha='center', va='bottom', fontsize=20)  # 设置文本标签字体大小
+
+plt.show()

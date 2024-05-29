@@ -1,0 +1,333 @@
+/**
+ * 
+ * Visualize Landsat time series and run CCDC on individual pixels
+ * 
+ * Author: Paulo Arevalo (parevalo@bu.edu)
+ * 
+ * Please cite as:
+ * Arévalo, P., Bullock, E.L., Woodcock, C.E., Olofsson, P., 2020. 
+ * A Suite of Tools for Continuous Land Change Monitoring in Google Earth Engine. 
+ * Front. Clim. 2. https://doi.org/10.3389/fclim.2020.576740
+ * 
+ * Additional credits: Zhiqiang Yang, and Noel Gorelick. 
+*/ 
+
+ 
+
+
+var uiUtils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/ui') 
+var horizontalStyle = {stretch: 'horizontal', width: '100%'}
+
+
+///////////////////////// SET UP PANELS
+var INDICES = ['NDVI', 'NBR', 'EVI', 'EVI2', 'NDFI', 'GREENNESS', 'BRIGHTNESS',
+    'WETNESS', 'GV','Shade','NPV','Soil']
+var BANDS = ['BLUE','GREEN','RED', 'NIR', 'SWIR1', 'SWIR2'] 
+var FULLBANDS = BANDS.concat(INDICES)
+var BPBANDS = ['GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
+var TMBANDS = ['GREEN', 'SWIR2']
+var dateFormat = 1
+
+
+var visLabels = {
+  fontWeight: 'bold', 
+  fontSize: '14px', 
+  padding: '4px 4px 4px 4px',
+  border: '1px solid black',
+  color: 'white',
+  backgroundColor: 'black',
+  textAlign: 'left',
+  stretch: 'horizontal'
+  }
+
+
+var ccdParams = {}
+var runParams = {}
+var vizParams = {}
+var globGeom = []
+var landsatCollections = {
+  "Landsat C2": 2,
+}
+
+
+// FUNCTION CALLBACKS
+function doGoLatLon(){
+ var lat = app.misc.lat.widgets().get(1).getValue()
+ var lon = app.misc.lon.widgets().get(1).getValue()
+ var label = "Lat: " + lat + " Lon: " + lon
+ var point = ee.Geometry.Point([parseFloat(lon), parseFloat(lat)])
+ app.main.mapPanel.addLayer(point, {}, label)
+ app.main.mapPanel.centerObject(point, 14)
+ 
+}
+
+function doLoad(){
+  // Support vector data only to simplify things
+  var assetPath = app.misc.dataPath.widgets().get(1).getValue()
+  var test = ee.String(ee.Algorithms.ObjectType(assetPath)).compareTo("FeatureCollection")
+  ee.Algorithms.If(test.eq(0), app.main.mapPanel.addLayer(ee.FeatureCollection(assetPath), {}, "Ancillary dataset"))
+}
+
+function mapCallback(coords){
+  // Retrieve ccdc arguments
+  ccdParams.breakpointBands = BPBANDS
+  ccdParams.tmaskBands= TMBANDS
+  ccdParams.dateFormat = dateFormat
+  ccdParams.lambda = parseFloat(app.ccd.lambda.widgets().get(1).getValue())
+  ccdParams.maxIterations = parseInt(app.ccd.maxIter.widgets().get(1).getValue())
+  ccdParams.minObservations = parseInt(app.ccd.minObs.widgets().get(1).getValue())
+  ccdParams.chiSquareProbability = parseFloat(app.ccd.chiSq.widgets().get(1).getValue())
+  ccdParams.minNumOfYearsScaler = parseFloat(app.ccd.minYears.widgets().get(1).getValue())
+  
+  globGeom = ee.Geometry.Point([coords.lon, coords.lat])
+  // Retrieve run and viz arguments
+  var currentCol = app.ccd.collectionSelector.widgets().get(1).getValue()
+  runParams.landsatCol = landsatCollections[currentCol]
+  runParams.bandSelect = app.ccd.bandSelector.widgets().get(1).getValue()
+  runParams.sDate = app.ccd.sDate.widgets().get(1).getValue()
+  runParams.eDate = app.ccd.eDate.widgets().get(1).getValue()
+  runParams.nSegs = parseInt(app.viz.nSegs.widgets().get(1).getValue())
+  
+  vizParams.tsType = app.viz.tsType.widgets().get(1).getValue()
+  vizParams.red = app.viz.redBox.widgets().get(0).getValue()
+  vizParams.green = app.viz.greenBox.widgets().get(0).getValue()
+  vizParams.blue = app.viz.blueBox.widgets().get(0).getValue()
+  vizParams.redMin = app.viz.redBox.widgets().get(1).getValue()
+  vizParams.greenMin = parseFloat(app.viz.greenBox.widgets().get(1).getValue())
+  vizParams.blueMin = parseFloat(app.viz.blueBox.widgets().get(1).getValue())
+  vizParams.redMax = parseFloat(app.viz.redBox.widgets().get(2).getValue())
+  vizParams.greenMax = parseFloat(app.viz.greenBox.widgets().get(2).getValue())
+  vizParams.blueMax = parseFloat(app.viz.blueBox.widgets().get(2).getValue())
+  
+
+}
+
+
+
+// Set interface and initialize app
+var app = {}
+var initApp = function(){
+  ui.root.clear()
+  
+  app.main = []
+  app.ccd = []
+  app.viz = []
+  app.misc = []
+  app.main.mainPanel = ui.Panel()
+  app.main.mapPanel = ui.Map({
+    onClick: mapCallback,
+    style: {
+      height: '80%',
+      cursor: 'crosshair'
+    }
+  })
+  
+  app.main.mapPanel.setOptions('HYBRID');
+
+  // Start date for ccdc
+  app.ccd.sDate = ui.Panel(
+      [
+        ui.Label({value:'Start date' , style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value:'2000-01-01', style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+    
+  //End date for ccdc
+  app.ccd.eDate = ui.Panel(
+      [
+        ui.Label({value:'End date' , style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value:'2023-01-01', style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  // Lambda
+  app.ccd.lambda = ui.Panel(
+      [
+        ui.Label({value:'Lambda', style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value: 0.002, style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  // maxIterations
+  app.ccd.maxIter = ui.Panel(
+      [
+        ui.Label({value:'Max iterations', style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value: 10000, style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  
+  // minObservations
+  app.ccd.minObs = ui.Panel(
+      [
+        ui.Label({value:'Min observations', style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value: 6, style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  // chiSquareProbability
+  app.ccd.chiSq = ui.Panel(
+      [
+        ui.Label({value:'Chi square prob', style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value: 0.99, style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  // minNumOfYearsScaler
+  app.ccd.minYears = ui.Panel(
+      [
+        ui.Label({value:'Min years scaler', style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value: 1.33, style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  // Band selector
+  app.ccd.bandSelector = ui.Panel(
+      [
+        ui.Label({value: 'Select band', style:{stretch: 'horizontal', color:'black'}}),
+        ui.Select({items: FULLBANDS, value: 'SWIR1', style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+    )
+  
+  // Collection selector
+  app.ccd.collectionSelector = ui.Panel(
+      [
+        ui.Label({value: 'Select collection', style:{stretch: 'horizontal', color:'black'}}),
+        ui.Select({items: ['Landsat C2'], value: 'Landsat C2', style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+    )
+  
+  ////// VIZ PARAMS  
+  
+  // Select DOY plot or regular
+  app.viz.tsType = ui.Panel(
+      [
+        ui.Label({value: 'Chart type', style:{stretch: 'horizontal', color:'black'}}),
+        ui.Select({items: ['Time series', 'DOY'], value: 'Time series', style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+    )
+  
+  // Number of segments for chart
+  app.viz.nSegs = ui.Panel(
+      [
+        ui.Label({value:'Num segments' , style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value:6, style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  var coefBandPanelGenerator = function(){ return ui.Panel([
+        ui.Select({items:FULLBANDS, style:{stretch: 'horizontal'}}),
+        ui.Textbox({value: 0, style:{stretch: 'horizontal'}}) ,
+        ui.Textbox({value: 0.6, style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      horizontalStyle)}  
+    
+  app.viz.redBox = coefBandPanelGenerator()
+  app.viz.greenBox = coefBandPanelGenerator()
+  app.viz.blueBox = coefBandPanelGenerator()
+  
+  app.viz.redBox.widgets().get(0).setValue('SWIR1')
+  app.viz.greenBox.widgets().get(0).setValue('NIR')
+  app.viz.blueBox.widgets().get(0).setValue('RED')
+  
+  ////// ANCILLARY DATA  
+  app.misc.dataPath = ui.Panel(
+      [
+        ui.Label({value:'Asset path' , style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value:'', style:{stretch: 'horizontal'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  app.misc.loadButton = ui.Button({label:'Load asset', style: {width: '95%'}, onClick: doLoad})
+  
+  // Navigate to lat/lon panel
+  app.misc.lat = ui.Panel(
+      [
+        ui.Label({value:'Lat' , style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value:'0', style:{stretch: 'horizontal', width: '60%'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  app.misc.lon = ui.Panel(
+      [
+        ui.Label({value:'Lon' , style:{stretch: 'horizontal',color:'black'}}),
+        ui.Textbox({value:'0', style:{stretch: 'horizontal', width: '60%'}}) 
+      ],
+      ui.Panel.Layout.Flow('horizontal'),
+      {stretch: 'horizontal'}
+  )
+  
+  app.misc.goLatLon = ui.Button({label:'Go!', onClick: doGoLatLon, style:{stretch: 'horizontal'}})
+  
+  app.misc.latLon = ui.Panel([app.misc.lat, app.misc.lon],
+                    ui.Panel.Layout.Flow('horizontal'),
+                    {stretch: 'horizontal'})
+                    
+  var citationLabel = 'Arévalo, P., Bullock, E.L., Woodcock, C.E., Olofsson, P., 2020. \
+  A Suite of Tools for Continuous Land Change Monitoring in Google Earth Engine. \
+  Front. Clim. 2.' 
+  var citationURL = 'https://doi.org/10.3389/fclim.2020.576740'
+  app.misc.citation = ui.Label(citationLabel, {}, citationURL)
+  
+  // Create sub-control panels
+  app.ccd.controlPanel = ui.Panel({style: {width: '100%'},
+                            widgets: [ui.Label('CCD controls', visLabels),
+                            app.ccd.collectionSelector, app.ccd.bandSelector, 
+                            app.ccd.sDate, app.ccd.eDate, app.ccd.lambda,
+                            app.ccd.maxIter, app.ccd.minObs, app.ccd.chiSq, app.ccd.minYears
+                            ]})
+                        
+  app.viz.controlPanel = ui.Panel({style: {width: '100%'},
+                            widgets: [ui.Label('Visualization params', visLabels), app.viz.tsType,
+                            app.viz.nSegs, app.viz.redBox, app.viz.greenBox, app.viz.blueBox]})
+                            
+  app.misc.controlPanel = ui.Panel({style: {width: '100%'},
+                            widgets: [ui.Label('Ancillary data', visLabels), app.misc.dataPath, 
+                            app.misc.loadButton, app.misc.latLon, app.misc.goLatLon,
+                            ui.Label('Please cite as:',visLabels),
+                            app.misc.citation]})
+                            
+  // Make main control Panel
+  app.main.controlPanel = ui.Panel({
+    style: {width: '10%'},
+    widgets: [app.ccd.controlPanel, app.viz.controlPanel, app.misc.controlPanel],
+    layout: ui.Panel.Layout.flow('vertical'),
+    
+  })
+
+  app.main.ccdChartPanel = uiUtils.getTSChart(app.main.mapPanel, ccdParams, runParams, vizParams)  
+
+  var dataPanel = ui.Panel(ui.SplitPanel(app.main.mapPanel, app.main.ccdChartPanel,'vertical'))
+  var fullUI = ui.SplitPanel(app.main.controlPanel, dataPanel, 'horizontal')
+  ui.root.add(fullUI)
+                        
+}
+
+initApp()

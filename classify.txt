@@ -1,0 +1,791 @@
+/** ///////////////////////////////////////////////////////////////////
+ * 
+ * Functions to facilitate the classification app
+ * 
+ ** /////////////////////////////////////////////////////////////////*/
+
+// Global variables 
+var horizontalStyle = {stretch: 'horizontal', width: '100%'}
+var miscUtils = require('projects/AREA2/public:utilities/misc') 
+var inputUtils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/inputs.js') 
+
+
+
+var makeTextPanel = function(label, value, stretch) {
+  return ui.Panel(
+  [
+    ui.Label({value:label, style:{stretch: stretch, color:'black'}}),
+    ui.Textbox({value:value, style:{stretch: stretch}}),
+
+  ],
+  ui.Panel.Layout.Flow(stretch),
+  horizontalStyle
+);
+}
+
+var arrayRemove = function(arr, value) {
+   return arr.filter(function(ele){
+       return ele != value;
+   });
+}
+
+var makeCheckbox = function(label, inputs) {
+  return ui.Checkbox({
+    label: label, 
+    value: true,
+    onChange: function(b) {
+      if (!b) {
+        inputs = arrayRemove(inputs, label)
+      } else {
+        inputs.push(label)
+      }
+      // return inputs
+    }  
+  })
+}
+
+var makePanel = function(stretch, widgets) {
+ return ui.Panel(
+    widgets,
+    ui.Panel.Layout.Flow(stretch)); 
+}
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////
+//
+//                    Classification App
+//
+////////////////////////////////////////////////////////////////////////
+
+
+//............. TRAINING SAMPLING ................//
+
+/**
+ * Choose method for subsetting training data. Currently,
+ * there is support for:
+ * 
+ * 1. Using all the training data
+ * 2. Using only the data within a random selection of grid points
+ * 3. Using all the training data with a subset of the full data
+ * 
+ */
+var training = function(theMap, visLabels, helperFuncs, props) {
+  var self = this
+  
+  this.widgs = {}
+  this.props = props
+  
+  // this.outGeo = outGeo
+
+  this.trainingOptions = ['Use All','Within Output Extent']
+  this.trainingStrategy = ''
+  this.yearOptions = ['Attribute','Specify Year','Predictors in Attributes']
+  this.yearStrategy = ''
+  this.widgs.panels = makePanel('vertical',
+    [
+      makeTextPanel('Training Data',self.props.trainingPathString,'horizontal'),
+      makeTextPanel('Attribute',self.props.trainingAttribute, 'horizontal'),
+
+    ]
+  )
+  
+  /**
+   * List of functions for the selector widget
+   */
+  this.funcs = [
+    this.useAllTraining, 
+    this.useRegionTraining,
+  ]
+  
+  this.widgs.dropdown = makePanel('horizontal',
+    [
+      ui.Label('Define training data strategy'),
+      ui.Select({
+        items: self.trainingOptions,
+        onChange: function(i) {
+          self.trainingStrategy = i
+          self.fc = ee.FeatureCollection(
+            self.widgs.panels.widgets().get(0).widgets().get(1).getValue())
+        helperFuncs.checkParams()
+
+        }
+      })
+    ])
+  
+  this.widgs.yearPanel = makePanel('vertical',[makeTextPanel('Training year*',self.props.trainingYear, 'horizontal')])
+  
+  // this.widgs.dropdown2 = makePanel('horizontal',
+  //   [
+  //     ui.Label('Define strategy for training date'),
+  //     ui.Select({
+  //       items: self.yearOptions,
+  //       onChange: function(i) {
+  //         self.yearStrategy = i
+  //         self.widgs.yearPanel.clear()
+  //         if (i == 'Attribute') {
+  //           self.widgs.yearPanel.add(makeTextPanel('Year attribute','year', 'horizontal'))
+  //         } else if (i == 'Specify Year') {
+  //           self.widgs.yearPanel.add(makeTextPanel('Training year','2016', 'horizontal'))
+  //         } 
+  //         helperFuncs.checkParams()
+  //       }
+  //     })
+  //   ])
+  
+  this.widgs.all = makePanel('vertical',
+    [
+      ui.Label('Training data procedure',visLabels),
+      self.widgs.dropdown,
+      self.widgs.panels,
+      // self.widgs.dropdown2,
+      self.widgs.yearPanel,
+      ui.Label('*This is only necessary if predictor data is not saved in the attributes of the training data.')
+    ]
+  )
+}
+
+
+
+//............. STUDY AREA ................//
+
+/**
+ * Draw a box on the map
+ * 
+ * Written by Justin Braaten (I think): https://emapr.github.io/LT-GEE/
+ * https://code.earthengine.google.com/82b08b69bd596ada4747cb4bb7ea9526
+ * 
+ * This function allows you to click on the map and after 5 clicks, the
+ * locations and joined, making a Polygon. This polygon can be used as the
+ * geographic extent of the analysis. 
+ */ 
+var DrawAreaTool = function(map) {
+  var drawingToolLayer = ui.Map.Layer({name: 'Area Selection Tool', visParams: {palette:'#4A8BF4', color:'#4A8BF4' }});
+
+  this.map = map;
+  this.selection = null;
+  this.active = false;
+  this.points = [];
+  this.area = null;
+  
+  this.listeners = [];
+
+  var tool = this;
+  
+  this.initialize = function() {
+    this.map.onClick(this.onMouseClick);
+    map.layers().reset()
+    map.layers().set(0, drawingToolLayer);
+  };
+  
+  this.startDrawing = function() {
+    this.active = true;
+    this.points = [];
+
+    this.map.style().set('cursor', 'crosshair');
+    drawingToolLayer.setShown(true);
+  };
+  
+  this.stopDrawing = function() {
+    tool.active = false;
+    tool.map.style().set('cursor', 'hand');
+
+    if(tool.points.length < 2) {
+      return;
+    }
+
+    var closedPoints = tool.points.slice(0,-1);
+    tool.area = ee.Geometry.Polygon(closedPoints)///.bounds();
+    
+    var empty = ee.Image().byte();
+    var test = empty.paint({
+      featureCollection: ee.FeatureCollection(tool.area),
+      color: 1,
+      width: 4
+    });
+  
+    drawingToolLayer.setEeObject(test);
+
+    tool.listeners.map(function(listener) {
+      listener(tool.area);
+    });
+  };
+  
+  this.onMouseClick = function(coords) {
+    if(!tool.active) {
+      return;
+    }
+    
+    tool.points.push([coords.lon, coords.lat]);
+
+    var geom = tool.points.length > 1 ? ee.Geometry.LineString(tool.points) : ee.Geometry.Point(tool.points[0]);
+    drawingToolLayer.setEeObject(geom);
+
+    if(tool.points.length > 4) {
+      tool.stopDrawing();
+    }
+  };
+  
+  this.onFinished = function(listener) {
+    tool.listeners.push(listener);
+  };
+  
+  this.initialize();
+};
+
+var region = function(theMap, grids,regions, visLabels, helperFuncs) {
+  var self = this
+  this.widgs = {}
+  this.widgs.geoPanel = ui.Panel()
+  this.regions = regions
+  this.theMap = theMap
+  this.regionTypes = ['Select Method','Draw on Map','Single Tile','Tile Intersecting Point','Multiple Tiles','Draw Multiple Tiles on Map','Country Boundary','Ecoregion','Feature Collection']
+  this.countryTable = ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017")
+  this.countries = self.countryTable.aggregate_histogram('country_na').keys()
+  
+  this.ecoregionTable = ee.FeatureCollection("RESOLVE/ECOREGIONS/2017")
+  this.ecoregions = self.ecoregionTable.aggregate_histogram('ECO_NAME').keys()
+  
+  this.widgs.singleTilePanel = makePanel('horizontal',
+    [
+      ui.Label({value:'Vertical #:', style:{color:'red'}}),
+      ui.Textbox({value:32, style:{stretch: 'horizontal'}}),
+      ui.Label({value:'Horizontal #:', style:{color:'red'}}),
+      ui.Textbox({value:61, style:{stretch: 'horizontal'}}) ,
+      ui.Label({value:'Region', style:{color:'red'}}),
+      ui.Select({items:self.regions,value: self.regions[5], style:{stretch: 'horizontal'}}) 
+    ]
+  )
+  
+  
+  this.widgs.multiplePanelStart = makePanel('horizontal',
+    [
+      ui.Label({value:'Vertical # Min:', style:{color:'red'}}),
+      ui.Textbox({value:30, style:{stretch: 'horizontal'}}),
+      ui.Label({value:'Horizontal # Min:', style:{color:'red'}}),
+      ui.Textbox({value:60, style:{stretch: 'horizontal'}}),
+      ui.Label({value:'Region', style:{color:'red'}}),
+      ui.Select({items:self.regions,value: self.regions[0], style:{stretch: 'horizontal'}}) 
+    ]
+  )
+  
+  
+  this.widgs.multiplePanelEnd = makePanel('vertical',
+    [
+      ui.Label({value:'Vertical # Max:', style:{color:'red'}}),
+      ui.Textbox({value:35, style:{stretch: 'horizontal'}}),
+      ui.Label({value:'Horizontal # End:', style:{color:'red'}}),
+      ui.Textbox({value:65, style:{stretch: 'horizontal'}}),
+    ]
+  )
+  
+  /**
+   * Helper function for drawing output extent. 
+   * 
+   * This function faciliates the drawing of the output extent using the
+   * DrawAreaTool() function. 
+   */ 
+  this.doAreaTool = function() {
+    self.widgs.geoPanel.add(ui.Label('Slowly click five points on the map and the application will generate a rectangle for the output extent geometry.'))
+    var tool = new DrawAreaTool(self.theMap);
+    tool.startDrawing();
+    tool.onFinished(function(geometry) {
+      self.outGeo = ee.Feature(geometry);
+      self.geoType = 1
+    });
+  }  
+    /**
+   * Helper function for defining output extent. 
+   */ 
+  this.areaFromFC = function() {
+    var lab = ui.Label('Path to FC')
+    var tb = ui.Textbox({
+      placeholder: 'path/to/fc',
+      value: 'path',
+      onChange: function(text, widg) {
+        var tempGeo = ee.FeatureCollection(text).union()
+        self.geoType = 1
+        
+        tempGeo.size().evaluate(function(val) { 
+          if (val > 0) {
+            self.outGeo = ee.Feature(tempGeo.first())
+            theMap.addLayer(self.outGeo, {},'Output Geometry')
+            theMap.centerObject(self.outGeo)
+          }
+        })
+      }
+    })
+    self.widgs.areaFromFC = ui.Panel([lab, tb], ui.Panel.Layout.Flow('horizontal'))
+    self.widgs.geoPanel.add(self.widgs.areaFromFC)
+  }
+  
+  /**
+   * Helper function for drawing output extent and finding overlapping tiles
+   * 
+   * This function faciliates the drawing of the output extent using the
+   * DrawAreaTool() function. 
+   */ 
+   this.drawMultipleTiles = function() {
+    self.widgs.geoPanel.add(ui.Label('Slowly click five points on the map and the application will generate a rectangle for the output extent geometry.'))
+    var tool = new DrawAreaTool(self.theMap);
+    tool.startDrawing();
+    tool.onFinished(function(geometry) {
+      var tempGeo = grids.filterBounds(geometry);
+  
+      tempGeo.size().evaluate(function(val) {
+        if (val > 0) {
+          self.outGeos = ee.FeatureCollection(tempGeo)
+          theMap.addLayer(self.outGeos, {},'Output Geometry')
+          theMap.centerObject(self.outGeos)
+          self.outGeosSize = val
+        } else {
+          print('No overlapping tiles found!')
+        }
+      })
+    })
+    
+  }
+  
+
+  /**
+   * Specify a single tile. 
+   * 
+   * This function filters the GLANCE global grid based on the users
+   * input properties in the GUI. 
+   */ 
+  this.doSingleTile = function() {
+    self.widgs.geoPanel.add(self.widgs.singleTilePanel)
+  
+    var tempGeo
+    var validateTile = ui.Button('Load Tile', function(){
+      h = Number(self.widgs.singleTilePanel.widgets().get(3).getValue())
+      v = Number(self.widgs.singleTilePanel.widgets().get(1).getValue())
+      r = String(self.widgs.singleTilePanel.widgets().get(5).getValue())
+      tempGeo = grids.filterMetadata('horizontal','equals',h)
+        .filterMetadata('vertical','equals',v)
+        .filterMetadata('zone','equals',r)
+  
+      tempGeo.size().evaluate(function(val) { 
+        if (val > 0) {
+          self.outGeo = ee.Feature(tempGeo.first())
+          theMap.addLayer(self.outGeo, {},'Output Geometry')
+          theMap.centerObject(self.outGeo)
+        }
+        else {
+          print('No Tile Found!')
+        }
+      })
+    })
+    self.widgs.geoPanel.add(validateTile)
+  }
+  
+  /**
+   * Find a single tile by clicking on the map. 
+   * 
+   * This function filters the GLANCE global grid based on the intersection of
+   * a point clicked on the map. 
+   */ 
+  this.doPoint = function() {
+    self.hasClicked = false
+    theMap.style().set('cursor', 'crosshair');
+    self.widgs.geoPanel.add(ui.Label('Click a location on the map to load the intersecting tile'))
+    theMap.onClick(function(coords) {
+      theMap.layers().reset()
+      var latitude = coords.lat
+      var longitude = coords.lon
+      var point = ee.Geometry.Point([longitude, latitude])
+      var tempGeo = grids.filterBounds(point)
+      
+      theMap.layers().set(0, point)
+      tempGeo.size().evaluate(function(val) { 
+        if (val > 0) {
+          self.outGeo = ee.Feature(tempGeo.first())
+          theMap.addLayer(self.outGeo, {},'Output Geometry')
+          theMap.centerObject(self.outGeo)
+        }
+     })
+     theMap.unlisten()
+    })
+  }
+  /**
+   * Find a single tile by clicking on the map. 
+   * 
+   * This function filters the GLANCE global grid based on the intersection of
+   * a point clicked on the map. 
+   */ 
+   
+  this.doEcoregion = function() {
+    self.hasClicked = false
+    self.geoType = 2
+    theMap.style().set('cursor', 'crosshair');
+    self.widgs.geoPanel.add(ui.Label('Click a location on the map to load the intersecting ecoregion'))
+    theMap.onClick(function(coords) {
+      theMap.layers().reset()
+      var latitude = coords.lat
+      var longitude = coords.lon
+      var point = ee.Geometry.Point([longitude, latitude])
+      var tempGeo = self.ecoregionTable.filterBounds(point)
+      
+      theMap.layers().set(0, point)
+      tempGeo.size().evaluate(function(val) { 
+        if (val > 0) {
+          self.outGeo = ee.Feature(tempGeo.first())
+          theMap.addLayer(self.outGeo, {},'Output Geometry')
+          theMap.centerObject(self.outGeo)
+        }
+     })
+     theMap.unlisten()
+    })
+  }
+  
+  /**
+   * Specify a range of tiles. 
+   * 
+   * This function filters the GLANCE global grid based on a range of
+   * the users input properties in the GUI. 
+   */ 
+  this.doMultipleTiles = function() {
+    
+    self.widgs.geoPanel.add(self.widgs.multiplePanelStart)
+    self.widgs.geoPanel.add(self.widgs.multiplePanelEnd)
+  
+    var tempGeo
+    var validateTile = ui.Button('Load Tiles', function(){
+      var h1 = Number(self.widgs.multiplePanelStart.widgets().get(3).getValue())
+      var v1 = Number(self.widgs.multiplePanelStart.widgets().get(1).getValue())
+      
+      var h2 = Number(self.widgs.multiplePanelEnd.widgets().get(3).getValue())
+      var v2 = Number(self.widgs.multiplePanelEnd.widgets().get(1).getValue())
+  
+      var r = String(self.widgs.multiplePanelStart.widgets().get(5).getValue())
+      tempGeo = grids.filterMetadata('horizontal','greater_than',h1)
+        .filterMetadata('horizontal','less_than',h2)
+        .filterMetadata('vertical','greater_than',v1)
+        .filterMetadata('vertical','less_than',v2)
+        .filterMetadata('zone','equals',r)
+  
+      tempGeo.size().evaluate(function(val) {
+        if (val > 0) {
+          self.outGeo = ee.FeatureCollection(tempGeo)
+          theMap.addLayer(self.outGeo, {},'Output Geometry')
+          theMap.centerObject(self.outGeo)
+          self.outGeosSize = val
+        } else if (val === 0) {
+          print('No Tile Found!')
+        }
+      })
+    })
+    self.widgs.geoPanel.add(validateTile)
+  }
+  
+  this.widgs.all = makePanel('vertical',
+    [
+      ui.Label('Define Output Region',visLabels),
+  
+   // this.widgs.selectRegion,
+  //    self.widgs.geoPanel
+    ]
+  )
+  // Evaluate country list to make dropdown
+  var countryList = ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017")
+    .aggregate_histogram('country_na')
+    .keys()
+    .getInfo()
+
+  this.widgs.countryPanel = makePanel('horizontal',
+    [
+      ui.Label({value:'Country:', style:{color:'black'}}),
+      ui.Select({
+        value: countryList[0],
+        items: countryList,
+        onChange: function(reg) {
+          self.outGeo = ee.Feature(
+            ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017")
+            .filterMetadata('country_na','equals',reg)
+            .union().first())
+          self.theMap.addLayer(self.outGeo, {},'Output Geometry')
+          self.theMap.centerObject(self.outGeo)
+          
+        }
+      })
+    ]
+  )
+  
+
+  
+  /**
+  * Helper function for defining output extent based on country boundary
+  */ 
+  this.countryFunc = function() {
+    self.widgs.geoPanel.add(self.widgs.countryPanel)
+    self.geoType = 1
+  }
+  
+  this.widgs.selectRegion = makePanel('horizontal',
+    [
+      ui.Label({value:'Define Study Region:', style:{color:'black'}}),
+      ui.Select({
+        value: 'Select Method',
+        items: self.regionTypes,
+        onChange: function(reg) {
+          self.widgs.geoPanel.clear()
+          Map.unlisten()
+          theMap.layers().reset()
+          var index = self.regionTypes.indexOf(reg) - 1
+          self.geoType = index
+          
+          var regionFuncs = [
+            self.doAreaTool, 
+            self.doSingleTile, 
+            self.doPoint, 
+            self.doMultipleTiles, 
+            self.drawMultipleTiles,
+            self.countryFunc,
+            self.doEcoregion,
+            self.areaFromFC
+          ]
+          var regionFunc = regionFuncs[index]
+          regionFunc(reg)
+          helperFuncs.checkParams()
+        }
+      })
+    ]
+  );
+  self.widgs.all.add(self.widgs.selectRegion)
+  self.widgs.all.add(self.widgs.geoPanel)
+  // })// End evaluate
+} 
+
+/**
+ * Classifier parameters
+ */
+var classifier = function(classifierList, eeClassifiers, visLabels, helperFuncs, defaultClassifier) {
+  var self = this
+  this.widgs = {}
+  this.classifierList = classifierList
+  this.eeClassifiers = eeClassifiers
+  this.visLabels = visLabels
+  this.widgs.classifierParams = makePanel('vertical', [])
+  this.defaultClassifier = defaultClassifier
+  this.randomForestOptions = function() {
+    self.widgs.classifierParams.add(makeTextPanel('numTrees',100,'horizontal'))
+    self.widgs.classifierParams.add(makeTextPanel('variablesPerSplit',null, 'horizontal'))
+  }
+  
+  this.svmOptions = function() {
+  }
+  
+  this.minimumDistanceOptions = function() {
+    self.widgs.classifierParams.add(makeTextPanel('Metric','euclidean','horizontal')) 
+  }
+    
+  this.changeClassifier = function(i) {
+    var index = self.classifierList.indexOf(i)
+    self.classifier = self.eeClassifiers[index]
+    self.classifierName = i
+    self.widgs.classifierParams.clear()
+    
+    helperFuncs.checkParams()
+  }
+  
+
+  this.widgs.classifierSelector = ui.Panel(
+    [
+      ui.Label({value:'Classifier', style:{stretch: 'horizontal', color:'black'}}),
+      ui.Select({
+        value: self.defaultClassifier,
+        items: self.classifierList, 
+        onChange: self.changeClassifier,
+        style:{stretch: 'horizontal',
+        }}),
+  
+    ],
+    ui.Panel.Layout.Flow('horizontal')
+  );
+  
+  this.widgs.all = makePanel('vertical',
+    [
+      ui.Label('Classification Parameters',self.visLabels),
+      self.widgs.classifierSelector,
+    ]
+  )
+}
+
+// PREDICTORS 
+var predictors = function(visLabels, coefs, props, helperFuncs) {
+  var self = this
+  this.widgs = []
+  this.widgs.bandChecks = makePanel('vertical', [])
+  this.widgs.coefChecks = makePanel('vertical', [])
+  this.widgs.derivedChecks = makePanel('vertical', [])
+  this.widgs.ancChecks = makePanel('vertical', [])
+  this.widgs.climChecks = makePanel('vertical', [])
+
+  this.widgs.inputCheckboxes = []
+  this.inputBands = []
+  this.inputCoefs = []
+  this.ancillary = []
+  this.possibleInputs = []
+  this.props = props
+
+  this.fillInputPanels = function(i) {
+    self.bands = i
+    // print(self.props)
+    for (var b = 0; b < i.length; b++) {
+      this.possibleInputs.push(i[b])
+      var newCheck = makeCheckbox(i[b], self.inputBands)
+      var bool = this.props.defaults[i[b]] || false
+      newCheck.setValue(bool)
+      newCheck.onChange(function(check, widg) {
+        var widgIndex = self.widgs.inputCheckboxes.indexOf(widg)
+        if (!check) {
+          self.inputBands = arrayRemove(self.inputBands, self.possibleInputs[widgIndex])
+        } else {
+          self.inputBands.push(self.possibleInputs[widgIndex])
+        }
+        helperFuncs.checkParams()
+      })
+      
+      self.widgs.inputCheckboxes.push(newCheck)
+      self.widgs.bandChecks.add(newCheck)
+      if (bool) {
+        self.inputBands.push(i[b])
+      }
+    }
+
+    for (var c = 0; c < coefs.length; c++) {
+      this.possibleInputs.push(coefs[c])
+    
+      var newCheck = makeCheckbox(coefs[c], self.inputCoefs)
+      var bool = this.props.defaults[coefs[c]] || false
+      newCheck.setValue(bool)
+      newCheck.onChange(function(check, widg) {
+        var widgIndex = self.widgs.inputCheckboxes.indexOf(widg)
+        if (!check) {
+          self.inputCoefs = arrayRemove(self.inputCoefs, self.possibleInputs[widgIndex])
+        } else {
+          self.inputCoefs.push(self.possibleInputs[widgIndex])
+        }
+      })
+      self.widgs.inputCheckboxes.push(newCheck)
+      self.widgs.coefChecks.add(newCheck)
+      if (bool) {
+        self.inputCoefs.push(coefs[c])
+      }
+    }
+  // }
+    
+    var derived = ['AMPLITUDE','PHASE','AMPLITUDE2','PHASE2','AMPLITUDE3','PHASE3']
+    
+    for (var c = 0; c < derived.length; c++) {
+      this.possibleInputs.push(derived[c])
+      var newCheck = makeCheckbox(derived[c], self.inputCoefs)
+      var bool = this.props.defaults[derived[c]] || false
+      newCheck.setValue(bool)
+
+      newCheck.onChange(function(check, widg) {
+        var widgIndex = self.widgs.inputCheckboxes.indexOf(widg)
+        if (!check) {
+          self.inputCoefs = arrayRemove(self.inputCoefs, self.possibleInputs[widgIndex])
+        } else {
+          self.inputCoefs.push(self.possibleInputs[widgIndex])
+        }
+      })
+      self.widgs.inputCheckboxes.push(newCheck)
+      self.widgs.derivedChecks.add(newCheck)
+      if (bool) {
+        self.inputCoefs.push(derived[c])
+      }
+    }
+  // }
+  
+  
+    var ancillaryList = ['ELEVATION','ASPECT','DEM_SLOPE', "WATER_OCCURRENCE","POPULATION", "TREE_COVER"]
+    var climateList = ['RAINFALL','TEMPERATURE']
+
+    for (var c = 0; c < ancillaryList.length; c++) {
+      this.possibleInputs.push(ancillaryList[c])
+  
+      var newCheck = makeCheckbox(ancillaryList[c], self.ancillary)
+      
+      var bool = this.props.defaults[ancillaryList[c]] || false
+      newCheck.setValue(bool)
+
+      newCheck.onChange(function(check, widg) {
+        var widgIndex = self.widgs.inputCheckboxes.indexOf(widg)
+        if (!check) {
+          self.ancillary = arrayRemove(self.ancillary, self.possibleInputs[widgIndex])
+        } else {
+          self.ancillary.push(self.possibleInputs[widgIndex])
+        }
+      })
+      
+      self.widgs.inputCheckboxes.push(newCheck)
+      self.widgs.ancChecks.add(newCheck)
+      if (bool) {
+        self.ancillary.push(ancillaryList[c])
+      }
+    }
+  
+    for (var c = 0; c < climateList.length; c++) {
+      this.possibleInputs.push(climateList[c])
+  
+      var newCheck = makeCheckbox(climateList[c], self.ancillary)
+      var bool = this.props.defaults[climateList[c]] || false
+      newCheck.setValue(bool)
+
+      newCheck.onChange(function(check, widg) {
+        var widgIndex = self.widgs.inputCheckboxes.indexOf(widg)
+        if (!check) {
+          self.ancillary = arrayRemove(self.ancillary, self.possibleInputs[widgIndex])
+        } else {
+          self.ancillary.push(self.possibleInputs[widgIndex])
+        }
+      })
+      
+      self.widgs.inputCheckboxes.push(newCheck)
+      self.widgs.climChecks.add(newCheck)
+      if (bool) {
+        self.ancillary.push(climateList[c])
+      }
+    }
+    
+  }
+  
+  this.widgs.checks = makePanel(
+    'horizontal', 
+    [self.widgs.bandChecks, self.widgs.coefChecks, self.widgs.derivedChecks])
+  this.widgs.ancillaryChecks = makePanel(
+    'horizontal',
+    [self.widgs.ancChecks, self.widgs.climChecks])
+  this.widgs.loadParams = ui.Label('CCDC Model Parameters (Loading!)')
+  this.widgs.all = makePanel('vertical', 
+    [
+      self.widgs.loadParams,
+      self.widgs.checks,
+      ui.Label({value:'Ancillary inputs: ', style: {stretch: 'both'}}),
+      self.widgs.ancillaryChecks,
+    ]
+  )
+}
+
+
+
+
+
+exports = {
+  makePanel: makePanel,
+  makeCheckbox: makeCheckbox,
+  makeTextPanel: makeTextPanel,
+  arrayRemove: arrayRemove,
+  predictors: predictors,
+  region: region,
+  classifier: classifier,
+  training: training
+}
+
+
+
+

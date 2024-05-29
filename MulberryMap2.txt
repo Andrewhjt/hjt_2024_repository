@@ -1,0 +1,35 @@
+import pandas as pd
+from pyecharts.charts import Sankey
+from pyecharts import options as opts
+
+# 假设我们有一个简单的 DataFrame，其链接如下：
+# a - a
+# b - b
+# c - c
+# d - d
+# e - e
+# 我们得构造适合的数据结构
+nodes = [{"name": name} for name in "abcde"]
+nodes.extend([{"name": name + '_1'} for name in "abcde"])  # 添加后缀以用于右边的节点
+
+# 桑葚图中的连接关系，值假设为 1
+links = [{"source": source, "target": target + '_1', "value": 1} for source, target in zip("abcde", "abcde")]
+
+# 创建 Sankey 实例，并添加数据和配置
+sankey = (
+    Sankey(init_opts=opts.InitOpts(width="2000px", height="800px"))
+    .add(
+        "sankey",
+        nodes,
+        links,
+        node_width=30,
+        node_gap=10,
+        label_opts=opts.LabelOpts(position='right'),
+        linestyle_opt=opts.LineStyleOpts(curve=0.5, opacity=0.5)
+    )
+    .set_global_opts(title_opts=opts.TitleOpts(title="桑葚图示例"))
+)
+
+# 渲染为 HTML 文件
+output_file_path = r'C:\Users\Administrator\Desktop\test.html'  # 你的输出文件路径
+sankey.render(output_file_path)

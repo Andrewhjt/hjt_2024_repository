@@ -1,0 +1,46 @@
+import cv2
+import numpy as np
+
+input_tif_path = r'E:\GraduationProject\TrainingPointALL\CCDMaskNEW2\Extract_tif31.tif'
+mask_tif_path = r'E:\GraduationProject\TrainingPointALL\CCDMaskNEW2\Extract_tif21.tif'  # 替换为你的掩膜文件路径
+output_tif_path = r'E:\GraduationProject\TrainingPointALL\CCDMaskNEW2\Extract_tif31_erodeNEW_1.tif'
+
+# Open the original TIF file and the mask file using GDAL
+dataset = gdal.Open(input_tif_path)
+mask_dataset = gdal.Open(mask_tif_path)
+geotransform = dataset.GetGeoTransform()
+projection = dataset.GetProjection()
+
+# Read the image data and the mask
+band = dataset.GetRasterBand(1)
+mask_band = mask_dataset.GetRasterBand(1)
+image = band.ReadAsArray()
+mask = mask_band.ReadAsArray()
+
+# Apply the mask to set the unwanted regions to 0
+image[mask != 0] = 0
+
+# Convert the image to 8-bit unsigned integers if it's not already
+if image.dtype != np.uint8:
+    image = image.astype(np.uint8)
+
+# Apply a 3x3 morphological erosion filter
+kernel = np.ones((3, 3), np.uint8)
+eroded_image = cv2.erode(image, kernel, iterations=1)
+
+# Re-apply the mask to the eroded image to set the unwanted regions back to 0
+eroded_image[mask != 0] = 0
+
+# Save the eroded image and its geospatial information using GDAL
+driver = gdal.GetDriverByName('GTiff')
+out_dataset = driver.Create(output_tif_path, eroded_image.shape[1], eroded_image.shape[0], 1, gdal.GDT_Byte)
+out_dataset.SetGeoTransform(geotransform)
+out_dataset.SetProjection(projection)
+out_band = out_dataset.GetRasterBand(1)
+out_band.WriteArray(eroded_image)
+
+# Clean up
+out_band.FlushCache()
+dataset = None
+mask_dataset = None
+out_dataset = None

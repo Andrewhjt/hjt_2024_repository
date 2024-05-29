@@ -1,0 +1,560 @@
+/**
+ * @license
+ * Copyright 2019 Boston University
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * @fileoverview User interface viewing predicted data and land cover
+ * @author Eric L. Bullock, PhD
+ */
+
+
+//............. UTILITIES ................//
+var dates = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/dates.js')
+var uiUtils = require('users/parevalo_bu/gee-ccdc-tools:APPS/app/classify') 
+var utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api') 
+
+ 
+//............. VARIABLES ................//
+
+var properties = function() {
+  this.coefs = [
+    "INTP", "SLP", 
+    "COS", "SIN", 
+    "COS2", "SIN2",
+    "COS3", "SIN3", 
+    "RMSE"]
+    
+  this.segs = ["S1", "S2", "S3","S4", "S5", "S6"]
+ 
+  /**
+   * Visualization parameters
+   */ 
+  this.visLabels = { 
+    fontWeight: 'bold', 
+    fontSize: '14px', 
+    padding: '4px 4px 4px 4px',
+    border: '1px solid black',
+    color: 'white',
+    backgroundColor: 'black',
+    textAlign: 'center',
+    stretch: 'horizontal'
+  }
+  this.visLabelsSub = {
+    fontWeight: 'bold', 
+    fontSize: '14px', 
+    padding: '4px 4px 4px 4px',
+    color: 'black',
+    backgroundColor: 'white',
+    textAlign: 'center',
+    stretch: 'horizontal'
+  }
+  
+  // Temporary
+  this.lcValues = ['','Forest','Grassland','Cropland','Water','Settlement','Otherland']
+
+}
+
+var PROPS
+var HELPER
+var RESULTS = {}
+var WIDGS = {}
+
+var horizontalStyle = {
+  stretch: 'horizontal', 
+  width: '100%'
+}
+
+//............. HELPER FUNCTIONS ................//
+var helperFuncs = function() {
+  
+   
+  // A neater way of return the value of a widget in a panel
+  this.getVal = function(panel, index) {
+    return panel
+      .widgets()
+      .get(index)
+      .getValue()
+  }
+  
+  // Check whether change visualization parameters were assigned
+  this.checkChange = function() {
+    var crit1 = PROPS.useChangeName 
+    var crit2 = PROPS.useChangePalette
+    return crit1 && crit2
+  }
+  
+  // Parse list of strings
+  this.parseList = function(list) {
+    return list.split(',')
+      .map(
+        function(item) {
+        return item.trim();
+      })
+  }
+  
+  // Return an image where 1 equals any values in a list
+  this.getMultipleVals = function(vals, date) {
+    return ee.Image.cat(
+      [
+        vals
+        .split(',')
+        .map(
+          function(item) {
+            return HELPER.getLC(date)
+              .eq(Number(item.trim()))
+          }
+        )
+      ]
+    ).reduce(
+      ee.Reducer.anyNonZero()
+    ).selfMask()
+  }
+  
+  // Simplify function for obtaining land cover at date  
+  this.getLC = function(date) {
+    var dateClassificationAfter = utils.Classification.getLcAtDate(
+      PROPS.imageLoaded, 
+      date, 
+      PROPS.segLength, 
+      null, 
+      null, 
+      'after',
+      null, 
+      null,
+      PROPS.coefsLoaded.select(['.*tStart','.*tEnd']), 
+      PROPS.dateFormat
+    )
+    
+    var dateClassificationBefore = utils.Classification.getLcAtDate(
+      PROPS.imageLoaded, 
+      date,
+      PROPS.segLength, 
+      null, 
+      null, 
+      'before', 
+      null, 
+      null,
+      PROPS.coefsLoaded.select(['.*tStart', '.*tEnd']), 
+      PROPS.dateFormat
+    )
+    
+    var dateClassification = ee.Image.cat(
+      [
+        dateClassificationBefore, 
+        dateClassificationAfter
+      ]
+    )
+    .reduce(
+      ee.Reducer.firstNonNull()
+    )
+
+    return dateClassification.rename([ee.String(date)])
+  }
+  
+  // Load CCDC coefficients based on the format they were saved in. 
+  this.loadCoefs = function() {
+    if (PROPS.pathType == 'Image') {
+      return ee.Image(PROPS.dataPath)
+    } else if (PROPS.resultsInLongFormat) {
+      return ee.ImageCollection(PROPS.dataPath).mosaic()
+    } else {
+      return utils.CCDC.buildCcdImage(
+        ee.ImageCollection(PROPS.dataPath).mosaic(), 
+        PROPS.segLength, 
+        ["BLUE","GREEN","RED","NIR","SWIR1","SWIR2","THERMAL"]
+      ) 
+    }
+  }
+  
+  // Get yearly land cover at a point
+  this.getYearlyLC = function() {
+    
+    var lcs = ee.List(PROPS.dateListFormatted).map(function(y) {
+      
+      var lcImage = HELPER.getLC(y)
+        .rename('lc')
+        
+      return lcImage.sample(PROPS.geo, 30, null, null, 1).first()
+      
+    })
+    
+    var fcList = []
+    for (var i = 0; i < PROPS.dateListFormatted.length; i++) {
+      fcList.push(lcs.get(i))
+    }
+    return ee.FeatureCollection(fcList)
+  }
+  
+  
+  this.getRealImages = function() {
+    
+    
+    var bandNames = PROPS.bands
+    // var imSize = 750  
+    var boundingBox = PROPS.geo.buffer(PROPS.imScale / 2).bounds()
+    var landsat = utils.Inputs.getLandsat()
+      .filterBounds(PROPS.geo)
+      
+    var imList = ee.List(PROPS.dateListFormatted).map(function(date) {
+
+      var date1 = ee.Date(date).advance(-2,'month')
+      var date2 = ee.Date(date).advance(2, 'month')
+      var landsatIms = landsat.filterDate(date1, date2)
+        .map(function(img) {
+          var mask = img.select(0).mask()
+          var maskVals = mask.rename('mask').reduceRegion({
+            reducer: ee.Reducer.sum(),
+            geometry: boundingBox,
+            scale: 30
+          })
+          return img.set('mask',maskVals.get('mask'))
+        }).sort('mask', false)
+      
+      return landsatIms.first().clip(boundingBox)
+    })
+    var datesOfImages = ee.ImageCollection(imList).aggregate_array('system:time_start')
+      .map(function(d) {
+        return ee.Date(d).format('yyyy-MM-dd')
+      })
+    return [imList, datesOfImages]
+  }
+  
+  
+  this.getPredictedImages = function() {
+    
+    
+    var bandNames = PROPS.bands
+    // var imSize = 750  
+    var segs = ['S1','S2','S3','S4','S5','S6'] 
+    var boundingBox = PROPS.geo.buffer(PROPS.imScale / 2).bounds()
+    
+    var imList = ee.List(PROPS.dateListFormatted).map(function(date) {
+      
+      
+      var formattedDate = dates.convertDate(
+        {
+          inputFormat: 3, 
+          inputDate: date, 
+          outputFormat: 0
+        }
+      )
+      
+      return utils.CCDC.getMultiSynthetic(
+        PROPS.coefsLoaded, 
+        formattedDate, 
+        0,
+        bandNames, 
+        segs
+      ).set('date', ee.String(date))
+      .clip(boundingBox)
+    })
+    return imList
+  }
+  
+  this.getPanels = function(lcList, realImList) {
+    for (var i = 0; i < PROPS.dateListFormatted.length; i++) {
+      
+      // Predict Image
+      var img = ee.Image(RESULTS.predictedImages.get(i)).paint(ee.FeatureCollection(PROPS.geo.buffer(30)), 1)
+      var tn = ui.Thumbnail(img)
+        .setParams({
+          bands: ['B3','B2','B1'],
+          min: 0,
+          max: 1400
+        })
+      var label = ui.Label('Date: ' + PROPS.dateListFormatted[i], PROPS.visLabelsSub)
+      var lcLabel = ui.Label('Land Cover: ' + PROPS.lcValues[lcList[i]], PROPS.visLabelsSub)
+      // var panel = ui.Panel({
+      //   widgets: [
+      //     ui.Label('Predicted Image', PROPS.visLabelsSub),
+      //     label,
+      //     lcLabel,
+      //     tn
+      //   ],
+      //   layout: ui.Panel.Layout.flow('vertical')
+      // })
+      WIDGS.main.predMapPanel.remove(WIDGS.main.loading)
+
+      // WIDGS.main.predMapPanel.add(panel)
+      
+      // Real Image
+      var img = ee.Image(RESULTS.realImages.get(i)).paint(ee.FeatureCollection(PROPS.geo.buffer(30)), 1)
+      var tn2 = ui.Thumbnail(img)
+        .setParams({
+          bands: ['RED','GREEN','BLUE'],
+          min: 0,
+          max: .14
+        })
+      var label2 = ui.Label('Date: ' + realImList[i], PROPS.visLabelsSub)
+      var panel = ui.Panel({
+        widgets: [
+          ui.Label('Predicted Image', PROPS.visLabelsSub),
+          label,
+          lcLabel,
+          tn,
+          ui.Label('Real Image (+- 1 Month)', PROPS.visLabelsSub),
+          label2,
+          tn2
+        ],
+        layout: ui.Panel.Layout.flow('vertical')
+      })
+      WIDGS.main.predMapPanel.add(panel)
+    }
+  }
+}
+/**
+ * Load an ee.Image or ee.ImageCollection
+ */
+var loadImage = function(obj){
+  WIDGS.main.inputPanel.clear()
+  PROPS.imageLoaded = ee.Image(HELPER.getVal(WIDGS.main.coefImage, 1))
+
+  // Get properties from input and evaluate to assign as parameters
+  var listToEvaluate = ee.List(
+    [
+      PROPS.imageLoaded.get('Coefficients'),
+      PROPS.imageLoaded.get('CoefType'),
+      PROPS.imageLoaded.get('DateFormat'),
+      PROPS.imageLoaded.get('LongFormat')
+    ]
+  )
+  listToEvaluate.evaluate(function(obj) {
+    PROPS.dataPath = obj[0]
+    PROPS.pathType = obj[1]
+    PROPS.dateFormat = obj[2]
+    PROPS.resultsInLongFormat = obj[3]
+
+    PROPS.segLength = 6 // To do
+
+    PROPS.coefsLoaded = HELPER.loadCoefs()
+    var lc1 = PROPS.imageLoaded.select(0)
+    var lc2 = PROPS.imageLoaded.select(1)
+    PROPS.changeClass = lc1.neq(lc2).and(lc1.neq(0)).and(lc2.neq(0)).selfMask()
+    WIDGS.main.mainPanel.addLayer(PROPS.changeClass, {palette: 'red'}, 'LC Change')
+
+    PROPS.bands = PROPS.coefsLoaded.bandNames().map(function(b) {
+      return ee.String(b).split('_').get(1)
+    })
+    .distinct()
+    .removeAll(['tStart','tEnd','tBreak','changeProb'])
+    .getInfo()
+    
+    if (!PROPS.imageLoaded instanceof ee.Image) {
+      print("Error loading segment image")
+    } else if (!PROPS.coefsLoaded instanceof ee.Image) {
+      print("Error loading information from metadata")
+    } else {
+      WIDGS.main.inputPanel.widgets().add(ui.Label('Click on a point on the map',PROPS.visLabelsSub))
+      WIDGS.main.inputPanel.widgets().add(WIDGS.main.dateBox)
+      WIDGS.main.inputPanel.widgets().add(WIDGS.main.scaleBox)
+    }
+    
+  }) // End evaluate
+
+} 
+
+
+/**
+ * Do the classification for a single region of interest
+ */
+var runProcedure = function(coords) {
+  WIDGS.main.predMapPanel.clear()
+  WIDGS.main.realImPanel.clear()
+  
+  WIDGS.main.loading = ui.Label('Loading....')
+  WIDGS.main.predMapPanel.add(WIDGS.main.loading)
+
+  var lat = coords.lat
+  var lon = coords.lon
+  PROPS.geo = ee.Geometry.Point([lon, lat])
+  // WIDGS.main.mainPanel.centerObject(PROPS.geo, 7)
+  // WIDGS.main.mainPanel.layers().reset()
+  WIDGS.main.mainPanel.addLayer(PROPS.geo, {}, 'Clicked Point')
+  
+ 
+  // Get dates formatted as list
+  PROPS.dateListFormatted = HELPER.parseList(PROPS.dateList)
+  
+  // Extract dates
+  RESULTS.classLabels = HELPER.getYearlyLC()
+  
+  // Predicted images
+  RESULTS.predictedImages = HELPER.getPredictedImages()
+  
+  var tempList = HELPER.getRealImages()
+  RESULTS.realImages = tempList[0]
+  RESULTS.realImageDates = tempList[1]
+
+  var listToEvaluate = ee.List([RESULTS.classLabels.aggregate_array('lc'),RESULTS.realImageDates])
+  listToEvaluate.evaluate(
+    function(obj) {
+      RESULTS.panels = HELPER.getPanels(obj[0], obj[1])
+
+    })
+
+
+  
+
+  
+}
+
+/**
+ * Initialize the application and add first panels to the interface
+ */
+var initApp = function() {
+
+  ui.root.clear()
+  PROPS = new properties()
+  HELPER = new helperFuncs()
+  
+  WIDGS.main = []
+  WIDGS.main.mainPanel = ui.Map()
+  WIDGS.main.mainPanel.centerObject(ee.Geometry.Point([38, 8.5]), 7)
+
+  WIDGS.main.coefImage = uiUtils.makeTextPanel(
+    'Segment Image',
+    'users/bullocke/ccdc/public/ethiopiaSegments',
+    'horizontal')
+
+  WIDGS.main.loadButton = ui.Button(
+    {
+      label:'Load', 
+      style: {
+        width: '95%'
+      },
+      onClick: loadImage
+    }
+  )
+
+  WIDGS.main.loadPanel = ui.Panel(
+    {
+      style: {
+        width: '100%'
+      }, 
+    widgets: [
+      ui.Label(
+        'Visualize Predicted Imagery at Points (BETA)',
+        PROPS.visLabels
+      ),
+      WIDGS.main.coefImage, 
+      WIDGS.main.loadButton]
+  })
+       
+  WIDGS.main.inputPanel = ui.Panel({
+    style: {width: '100%'},
+  })
+  
+  WIDGS.main.sidePanel = ui.Panel(
+    {
+      style: {
+        width: '25%'
+      },
+    widgets: [
+      WIDGS.main.loadPanel, 
+      WIDGS.main.inputPanel
+    ],
+    layout: ui.Panel.Layout.Flow('vertical')
+  })
+
+  WIDGS.main.mainPanel.onClick(runProcedure)
+  
+  PROPS.dateList = '2001-01-1, 2003-01-01, 2004-01-01, 2006-01-01, 2008-01-01, 2010-01-01, 2012-01-01, 2014-01-01, 2016-01-01, 2018-01-01'
+  PROPS.imScale = 2000
+  PROPS.imBands = [2,1,0]
+  
+  WIDGS.main.dateBox = uiUtils.makeTextPanel(
+    'Dates to Visualize (YYYY-MM-DD); Comma separated',
+    PROPS.dateList,
+    'horizontal')
+    
+  WIDGS.main.scaleBox = uiUtils.makeTextPanel(
+    'Thumbnail Edge Length (m)',
+    PROPS.imScale,
+    'horizontal')
+    
+  WIDGS.main.dateBox
+  .widgets()
+  .get(1)
+  .onChange(
+    function(str) {
+      PROPS.dateList = str
+    }
+  )
+      
+  WIDGS.main.scaleBox
+  .widgets()
+  .get(1)
+  .onChange(
+    function(str) {
+      PROPS.imScale = Number(str)
+    }
+  )
+  
+  
+  WIDGS.main.predMapPanel = ui.Panel(
+    {
+      style: {
+        stretch: 'vertical',
+        position: 'bottom-center',
+        width: '100%',
+      },
+      layout: ui.Panel.Layout.flow('horizontal')
+    })
+
+  WIDGS.main.realImPanel = ui.Panel(
+    {
+      style: {
+        stretch: 'vertical',
+        position: 'bottom-center',
+        width: '100%',
+      },
+      layout: ui.Panel.Layout.flow('horizontal')
+    })
+
+  WIDGS.main.mapPanel = ui.Panel(
+    { 
+      widgets: [
+        WIDGS.main.predMapPanel, 
+        WIDGS.main.realImPanel
+      ],
+      style: {
+        // stretch: 'vertical',
+        // position: 'bottom-center',
+        // width: '100%',
+        // height: '50%'
+      },
+      layout: ui.Panel.Layout.flow('vertical')
+    })
+  
+  // WIDGS.main.mainPanel.add(WIDGS.main.sidePanel)
+  
+  var leftPanel = ui.SplitPanel(
+    WIDGS.main.mainPanel, 
+    WIDGS.main.mapPanel,
+    'vertical')
+  
+  // var fullPanel = ui.SplitPanel(
+  //   WIDGS.main.leftPanel, 
+  //   WIDGS.main.sidePanel,
+  //   'horizontal')
+  ui.root.add(leftPanel)
+  ui.root.add(WIDGS.main.sidePanel)
+  // WIDGS.main.mainPanel.add(WIDGS.main.sidePanel)
+}
+
+
+initApp()
+// 
+// #33a02c, #b2df8a, #fdbf6f, #1f78b4, #fb9a99, #ff7f00 
+// Forest, Grassland, Cropland, Water, Settlement, Other

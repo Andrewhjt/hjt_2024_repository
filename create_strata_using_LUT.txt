@@ -1,0 +1,294 @@
+/**
+ * 
+ * Create stratification for multiple years using a lookup table
+ * 
+ * Author: Paulo Arevalo (parevalo@bu.edu)
+ * 
+ * Please cite as:
+ * Arévalo, P., Bullock, E.L., Woodcock, C.E., Olofsson, P., 2020. 
+ * A Suite of Tools for Continuous Land Change Monitoring in Google Earth Engine. 
+ * Front. Clim. 2. https://doi.org/10.3389/fclim.2020.576740
+ * 
+*/
+
+var visLabels = {
+  fontWeight: 'bold', 
+  fontSize: '14px', 
+  padding: '4px 4px 4px 4px', 
+  border: '1px solid black',
+  color: 'white',
+  backgroundColor: 'black',
+  textAlign: 'left',
+  stretch: 'horizontal'
+  }
+
+var boldLabels = {
+  fontWeight: 'bold', 
+  textAlign: 'center',
+  stretch: 'horizontal'
+  }
+
+var horizontalStyle = {stretch: 'horizontal', width: '100%'}
+
+// Set interface and initialize app
+var app = {}
+
+function lutRowMaker(label){
+  return ui.Panel([
+    // ui.Label({value: label, style:{width: '12%', stretch:'vertical'}}),
+    ui.Textbox({style: {stretch: 'horizontal'}}),
+    ui.Textbox({style: {stretch: 'horizontal'}}),
+    ui.Textbox({style: {stretch: 'horizontal'}})
+  ], 
+  ui.Panel.Layout.Flow('horizontal'),
+  horizontalStyle)
+}
+
+function addRowCallback(label){
+  app.main.LUT.add(lutRowMaker())
+}
+
+
+
+function applyLUT(){
+  
+  // Need to be re-set every time, otherwise list will accumulate if
+  // create strata is clicked twice and that will result in classification
+  // that does not show the actual reclass values
+  var fromValues = []
+  var toValues = []
+  var reclassValues = []
+  
+  app.main.LUT.widgets().map(function(x){
+    var fromValue =  parseInt(x.widgets().get(0).getValue())
+    var toValue =  parseInt(x.widgets().get(1).getValue())
+    var reclassValue =  parseInt(x.widgets().get(2).getValue())
+    fromValues.push(fromValue)
+    toValues.push(toValue)
+    reclassValues.push(reclassValue)
+  })
+  
+  
+  // print(fromValues)
+  // print(toValues)
+  // print(reclassValues)
+  
+  // Get years from and to
+  var yearsFrom = app.main.yearsFrom.widgets().get(1).getValue().split(',')
+      .map(function(x){return x.trim()})
+  var yearsTo = app.main.yearsTo.widgets().get(1).getValue().split(',')
+      .map(function(x){return x.trim()})
+  
+  // print(yearsFrom)
+  // print(yearsTo)
+  
+  //Get fill value
+  var fillValue = parseInt(app.main.fillValue.widgets().get(1).getValue())
+  
+  // Map over periods and create stratification
+  var periodStrata =  ee.Image.cat(yearsFrom.map(function(y, i){
+    var time1 = LAYERS.landCoverMaps.select('.*' + y + '.*') 
+    var time2 = LAYERS.landCoverMaps.select('.*' + yearsTo[i] + '.*')
+     
+    var test = time1.eq(ee.Image(fromValues)).and(time2.eq(ee.Image(toValues)))
+      .multiply(reclassValues)
+      .reduce(ee.Reducer.sum())
+      
+    var final = test.where(test.eq(0), fillValue)
+    return final.rename('Strata_' + y + '-' + yearsTo[i])
+      
+  }))
+  
+  print("Strata bands created: ", periodStrata)
+  app.main.mapPanel.centerObject(LAYERS.landCoverMaps)
+  app.main.mapPanel.addLayer(periodStrata.select(0).randomVisualizer(), {}, "First strata")
+  
+  print(ui.Chart.image.histogram({
+    image: periodStrata.select(0), 
+    region:LAYERS.landCoverMaps.geometry(), 
+    scale:30, 
+    maxPixels:1e13
+    
+  }))
+  
+  Export.image.toAsset({
+    description: "Export_to_asset",
+    image: periodStrata,
+    scale: 30,
+    maxPixels:1e13,
+    region: LAYERS.landCoverMaps.geometry(),
+    pyramidingPolicy: {'.default': 'mode'}
+    
+  })
+  
+  Export.image.toDrive({
+    description: "Export_to_drive",
+    image: periodStrata.toDouble(),
+    scale: 30,
+    maxPixels:1e13,
+    region: LAYERS.landCoverMaps.geometry(),
+  })
+  
+  // var time1 = image.select('LC_2010-07-01') 
+  // var time2 = image.select('LC_2015-07-01')
+  
+  // var test = time1.eq(ee.Image(fromValues)).and(time2.eq(ee.Image(toValues)))
+  //     .multiply(reclassValues)
+  //     .reduce(ee.Reducer.sum())
+      
+  // var final = test.where(test.eq(0), fillValue)
+  
+  // app.main.mapPanel.addLayer(time1.randomVisualizer())
+  // app.main.mapPanel.addLayer(time2.randomVisualizer())
+  // app.main.mapPanel.addLayer(final.randomVisualizer())
+  
+}
+
+var LAYERS = {}
+
+var initApp = function(){
+  ui.root.clear()
+  
+  app.main = []
+  app.main.mainPanel = ui.Panel()
+  app.main.mapPanel = ui.Map({
+    // onClick: mapCallback,
+    style: {
+      // height: '80%',
+      cursor: 'crosshair'
+    }
+  })
+  
+  app.main.inputMaps = ui.Panel([
+    ui.Label({value: 'Image path', style:{width: '12%', stretch:'vertical'}}),
+    ui.Textbox({
+      // value: 'projects/GLANCE/RESULTS/CLASSIFICATION/VERSION_1/NA/V1-2/LCMAPSFixedSynt_256',
+      placeholder: 'projects/GLANCE/RESULTS/CLASSIFICATION/VERSION_1/NA/V1-2/LCMAPSFixedSynt_256',
+      style: {stretch: 'horizontal'}
+    })
+  ], 
+  ui.Panel.Layout.Flow('horizontal'),
+  horizontalStyle)
+  
+  app.main.fillValue = ui.Panel([
+    ui.Label({value: 'Fill value', style:{width: '12%', stretch:'vertical'}}),
+    ui.Textbox({style: {stretch: 'horizontal'}})
+  ], 
+  ui.Panel.Layout.Flow('horizontal'),
+  horizontalStyle)
+  
+  app.main.yearsFrom = ui.Panel([
+    ui.Label({value: 'Years from', style:{width: '12%', stretch:'vertical'}}),
+    ui.Textbox({
+      placeholder: '2001, 2002, 2003',
+      value: '2001, 2002, 2003',
+      style: {stretch: 'horizontal'}})
+  ], 
+  ui.Panel.Layout.Flow('horizontal'),
+  horizontalStyle)
+  
+  app.main.yearsTo = ui.Panel([
+    ui.Label({value: 'Years to', style:{width: '12%', stretch:'vertical'}}),
+    ui.Textbox({
+      placeholder: '2002, 2003, 2004',
+      value: '2002, 2003, 2004', 
+      style: {stretch: 'horizontal'}})
+  ], 
+  ui.Panel.Layout.Flow('horizontal'),
+  horizontalStyle)
+  
+  app.main.LUTHeaders = ui.Panel([
+    ui.Label({value: 'Class from', style: boldLabels}),
+    ui.Label({value: 'Class to', style: boldLabels}),
+    ui.Label({value: 'New value', style: boldLabels})
+  ], 
+  ui.Panel.Layout.Flow('horizontal'),
+  horizontalStyle)
+  
+  app.main.addRow = ui.Button({
+    label: 'Add row', 
+    onClick: addRowCallback,
+    style:{stretch: 'horizontal'}
+  })
+  
+  app.main.loadMaps = ui.Button({
+    label: 'Load maps', 
+    onClick: function(x){
+      LAYERS.landCoverMaps = ee.Image(app.main.inputMaps.widgets().get(1).getValue())
+      print("Available bands are: ", LAYERS.landCoverMaps.bandNames())
+    },
+    style:{stretch: 'horizontal'}
+  })
+
+  app.main.retrieveLUT = ui.Button({
+    label: 'Create strata', 
+    onClick: applyLUT,
+    style:{stretch: 'horizontal'}
+  })
+  
+  app.main.LUT = ui.Panel({
+    widgets: []
+  })
+  
+  app.main.LUTPanel = ui.Panel({
+    style: {width: '30%'},
+    widgets: [ui.Label('Load land cover image', visLabels), 
+    app.main.inputMaps, app.main.loadMaps, 
+    ui.Label('Set LUT to create map stratification ', visLabels),
+    app.main.yearsFrom, app.main.yearsTo, app.main.fillValue, 
+    app.main.addRow, app.main.LUTHeaders, app.main.LUT, app.main.retrieveLUT]
+  })
+  
+  
+  var fullUI = ui.SplitPanel(app.main.mapPanel, app.main.LUTPanel, 'horizontal')
+  ui.root.add(fullUI)
+                        
+}
+
+initApp()
+
+
+
+
+// var time1 = image.select('LC_2010-07-01') 
+// var time2 = image.select('LC_2015-07-01') 
+
+// Map.addLayer(time1.randomVisualizer(), {}, "time1")
+// Map.addLayer(time2.randomVisualizer(), {}, "time2")
+
+// var from = [1,2,3,4,5,6,7,5,5,6,5]
+// var to = [1,2,3,4,5,6,7,7,6,7,3]
+// var newValue = [1,2,3,4,5,6,7,8, 9, 10, 11]
+// var fillValue = 12
+
+// var newValueImg = ee.Image(newValue)
+// print(newValueImg)
+
+// //
+// var test = time1.eq(ee.Image(from)).and(time2.eq(ee.Image(to))).multiply(newValue)
+//     .reduce(ee.Reducer.sum())
+    
+// var final = test.where(test.eq(0), fillValue)
+
+    
+// Map.addLayer(test.randomVisualizer(), {}, "test")
+// Map.addLayer(final.randomVisualizer(), {}, "final")
+
+
+// var horizontalStyle = {stretch: 'horizontal', width: '100%'}
+
+// function lutRowMaker(label){
+//   return ui.Panel([
+//     ui.Label({value: label, style:{width: '12%', stretch:'vertical'}}),
+//     ui.Textbox({style: {stretch: 'horizontal'}}),
+//     ui.Textbox({style: {stretch: 'horizontal'}}),
+//     ui.Textbox({style: {stretch: 'horizontal'}})
+//   ], 
+//   ui.Panel.Layout.Flow('horizontal'),
+//   horizontalStyle)
+// }
+
+// print(lutRowMaker('C1'))
+
+// var addRow = ui.Button({label: 'Add row', onClick:function(x){print(lutRowMaker('C1'))}})
+// Map.add(addRow)

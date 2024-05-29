@@ -1,0 +1,20 @@
+/**
+ * 
+ * Simplified viewer for CCDC results run on Landsat time series
+ * for a single pixel. Suitable for use on small screens (i.e. phones)
+ * 
+ * Author: Paulo Arevalo (parevalo@bu.edu)
+ * 
+ * Please cite as:
+ * Arévalo, P., Bullock, E.L., Woodcock, C.E., Olofsson, P., 2020. 
+ * A Suite of Tools for Continuous Land Change Monitoring in Google Earth Engine. 
+ * Front. Clim. 2. https://doi.org/10.3389/fclim.2020.576740
+ * 
+ * Additional credits: Zhiqiang Yang, and Noel Gorelick. 
+*/ 
+ 
+var uiUtils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/ui') 
+var map = ui.Map().setControlVisibility({drawingToolsControl: false})
+
+// If no ccd params dict is passed, it will run with the defaults
+ui.root.widgets().set(0, uiUtils.initializeTSViewer(map))

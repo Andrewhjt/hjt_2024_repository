@@ -1,0 +1,159 @@
+//这个观察卫星图像的代码先选择观测时间段，会根据这个时间段内图像质量最好的一段进行展示，
+//同时由于为了方便，我这里将观测地点自动设置为太原，可以根据自己的需求进行修改
+// 假设你的Shapefile已经上传并命名为'users/your_username/BeijingBoundary'
+var beijingCustom = ee.FeatureCollection('users/2404182135/TaiYuanNew');
+
+// 可视化和打印
+Map.centerObject(beijingCustom, 12);
+Map.addLayer(beijingCustom, {color: 'blue'}, 'Custom Beijing Boundary');
+print('Custom Beijing Feature Collection:', beijingCustom);
+
+
+
+// //Landsat9
+// var dataset = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')
+//     .filterDate('2023-01-15', '2023-2-01');
+//     //.filterBounds(beijingCustom)
+// // Applies scaling factors.
+// function applyScaleFactors(image) {
+//   var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+//   var thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0);
+//   return image.addBands(opticalBands, null, true)
+//               .addBands(thermalBands, null, true);
+// }
+
+// dataset = dataset.map(applyScaleFactors);
+
+// var visualization = {
+//   bands: ['SR_B4', 'SR_B3', 'SR_B2'],
+//   min: 0.0,
+//   max: 0.3,
+// };
+
+
+
+// Map.addLayer(dataset, visualization, 'True Color (432)');
+
+
+
+
+
+// //Landsat5
+// var dataset = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2')
+//     .filterDate('2000-09-01', '2000-10-01');
+
+// // Applies scaling factors.
+// function applyScaleFactors(image) {
+//   var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+//   var thermalBand = image.select('ST_B6').multiply(0.00341802).add(149.0);
+//   return image.addBands(opticalBands, null, true)
+//               .addBands(thermalBand, null, true);
+// }
+
+// dataset = dataset.map(applyScaleFactors);
+
+// var visualization = {
+//   bands: ['SR_B3', 'SR_B2', 'SR_B1'],
+//   min: 0.0,
+//   max: 0.3,
+// };
+
+
+
+// Map.addLayer(dataset, visualization, 'True Color (321)');
+
+
+
+
+
+//Landsat5
+var dataset = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2')
+    .filterDate('2000-01-01', '2000-12-01')
+    .filter(ee.Filter.lt('CLOUD_COVER', 10)); // 这里假设过滤掉云量大于10%的图像
+
+function applyScaleFactors(image) {
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  var thermalBand = image.select('ST_B6').multiply(0.00341802).add(149.0);
+  return image.addBands(opticalBands, null, true)
+              .addBands(thermalBand, null, true);
+}
+
+dataset = dataset.map(applyScaleFactors);
+
+// 使用中值合成创建一个单一的代表性图像
+var composite = dataset.median();
+
+var visualization = {
+  bands: ['SR_B3', 'SR_B2', 'SR_B1'],
+  min: 0.0,
+  max: 0.2,
+};
+
+
+// 添加中值合成图层
+Map.addLayer(composite, visualization, 'True Color (321)');
+
+
+
+
+//Landsat7
+// var dataset = ee.ImageCollection('LANDSAT/LE07/C02/T1_L2')
+//     .filterDate('2009-09-01', '2010-12-01')
+//     .filter(ee.Filter.lt('CLOUD_COVER', 10)); // 增加了一个云量过滤器
+
+// function applyScaleFactors(image) {
+//   var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+//   var thermalBand = image.select('ST_B6').multiply(0.00341802).add(149.0);
+//   return image.addBands(opticalBands, null, true)
+//               .addBands(thermalBand, null, true);
+// }
+
+// dataset = dataset.map(applyScaleFactors);
+
+// // 使用中值合成方法合成单个图像
+// var composite = dataset.median();
+
+// var visualization = {
+//   bands: ['SR_B3', 'SR_B2', 'SR_B1'],
+//   min: 0.0,
+//   max: 0.3,
+// };
+
+// //Map.setCenter(-114.2579, 38.9275, 8);
+// // 添加中值合成的图层到地图上
+// Map.addLayer(composite, visualization, 'True Color (321)');
+
+
+
+
+
+
+// //Landsat8
+// var dataset = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+//     .filterDate('2020-01-01', '2020-12-01')
+//     .filter(ee.Filter.lt('CLOUD_COVER', 10)); // 这里添加了云量过滤条件
+
+// function applyScaleFactors(image) {
+//   var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+//   var thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0);
+//   return image.addBands(opticalBands, null, true)
+//               .addBands(thermalBands, null, true);
+// }
+
+// dataset = dataset.map(applyScaleFactors);
+
+// var composite = dataset.median(); // 使用中值合成方法来整合图像
+
+// var visualization = {
+//   bands: ['SR_B4', 'SR_B3', 'SR_B2'],
+//   min: 0.0,
+//   max: 0.3,
+// };
+
+// //Map.setCenter(-114.2579, 38.9275, 8);
+
+// Map.addLayer(composite, visualization, 'True Color (432)'); // 在这里，将dataset替换为综合图像composite
+
+
+
+

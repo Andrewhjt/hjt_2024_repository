@@ -1,0 +1,837 @@
+
+//CCDC founction library  that contains functions 
+//for generating input data and processing CCDC results
+var utils=require(
+   'users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api');
+
+//var utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api')
+
+
+
+
+
+
+
+
+
+
+// // Define parameters
+
+// // Change detection parameters
+// var changeDetection = {
+//   breakpointBands: ['GREEN','RED','NIR','SWIR1','SWIR2'],
+//   tmaskBands: ['GREEN','SWIR1'],
+//   minObservations: 6,
+//   chiSquareProbability: .99,
+//   minNumOfYearsScaler: 1.33,
+//   dateFormat: 2,
+//   lambda: 20/10000,
+//   maxIterations: 25000
+// }
+
+
+// // Classification parameters
+// var classification = {
+//   bandNames: ['GREEN','RED','NIR','SWIR1','SWIR2'],
+//   inputFeatures: ["INTP", "SLP","PHASE","RMSE"],
+//   coefs: ["INTP", "SLP","COS", "SIN","RMSE","COS2","SIN2","COS3","SIN3"],
+//   ancillaryFeatures: ["ELEVATION","ASPECT","DEM_SLOPE","RAINFALL","TEMPERATURE"],
+//   resultFormat: 'SegCollection',
+//   classProperty: 'landcover',
+//   yearProperty: 'year',
+//   classifier: ee.Classifier.smileRandomForest,
+//   classifierParams: {
+//     numberOfTrees: 500,
+//     variablesPerSplit: null,
+//     minLeafPopulation: 1,
+//     bagFraction: 0.5,
+//     maxNodes: null
+//   },
+//   outPath: 'projects/GLANCE/RESULTS/CLASSIFICATION/VERSION_1',
+//   segs: ["S1", "S2", "S3", "S4", "S5", "S6"],
+//   trainingPath: 'users/2404182135/SingleTrainingPoint2010',
+//   trainingPathPredictors: 'users/2404182135/TrainingPointGEENew2',
+// }
+
+// var studyRegion = ee.FeatureCollection('users/2404182135/TaiYuanNew')
+  
+
+// var params = {
+//   start: '2000-01-01',
+//   end: '2024-01-01',
+//   ChangeDetection: changeDetection,
+//   Classification: classification,
+//   StudyRegion: studyRegion
+// }
+
+
+
+
+
+
+
+
+
+
+
+
+
+// //ROI
+// var studyRegion=ee.Geometry.Rectangle([
+//   [-63.9533, -10.1315],
+//   [-64.9118, -10.6813]
+// ]);
+var studyRegion = ee.FeatureCollection("users/2404182135/TaiYuanNew").geometry();
+
+
+// Define start, end dates and Landsat bands to use.//定义要使用的开始日期、结束日期和 Landsat 波段。
+var startDate='2000-01-01';
+var endDate='2024-01-01';
+var bands=['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2'];
+
+// Retrieve all clear, Landsat 4, 5, 7 and 8 observations (Collection 2, Tier 1).
+var filteredLandsat=utils.Inputs.getLandsat({
+       collection: 2
+       
+   })
+   //.geometry(studyRegion)
+   .filterBounds(studyRegion)
+   .filterDate(startDate, endDate)
+   .select(bands);
+   
+
+print(filteredLandsat.first());
+
+
+
+
+// //显示所处理的卫星图像的大小，每完成四分之一汇报进度，同时输出处理的图像的数量
+// // 导入CCDC工具库
+// var utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api');
+
+// // 定义研究区域
+// var studyRegion = ee.FeatureCollection("users/2404182135/TaiYuanNew").geometry();
+
+// // 定义开始和结束日期及要使用的Landsat波段
+// var startDate = '2000-01-01';
+// var endDate = '2024-01-01';
+// var bands = ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2'];
+
+// // 检索和过滤Landsat图像
+// var filteredLandsat = utils.Inputs.getLandsat({
+//       collection: 2
+//   })
+//   .filterBounds(studyRegion)
+//   .filterDate(startDate, endDate)
+//   .select(bands);
+
+// print("Number of images in collection:", filteredLandsat.size());
+
+// // 函数：计算单个图像的大小
+// function calculateImageSize(image) {
+//   var stats = image.reduceRegion({
+//     reducer: ee.Reducer.count(),
+//     geometry: studyRegion,
+//     scale: 30,
+//     maxPixels: 1e9
+//   });
+//   var pixelCount = ee.Number(stats.get('BLUE', 0));  // 取第一个波段的像素计数
+//   var imageSizeMB = pixelCount.multiply(6).divide(1024).divide(1024);  // 6个波段，每个波段的像素大小为1字节，转换为MB
+//   return imageSizeMB;
+// }
+
+// // 计算图像集合的总大小
+// var imageSizes = filteredLandsat.map(function(image) {
+//   var size = calculateImageSize(image);
+//   return image.set('sizeMB', size);
+// });
+
+// // 检查计算是否正确
+// var debugImage = imageSizes.first();
+// print("Debug first image size (MB):", debugImage.get('sizeMB'));
+
+// // 将大小集合转换为列表
+// var sizeList = imageSizes.aggregate_array('sizeMB');
+
+// // 计算总大小并输出阶段性进度
+// sizeList.evaluate(function(sizes) {
+//   if (sizes && sizes.length > 0) {
+//     var totalImages = sizes.length;
+//     var totalSizeMB = 0;
+//     var step = Math.ceil(totalImages / 4);
+
+//     for (var i = 0; i < totalImages; i++) {
+//       totalSizeMB += sizes[i];
+
+//       // 每完成一个阶段（25%、50%、75%、100%）时输出进度
+//       if ((i + 1) % step === 0 || i === totalImages - 1) {
+//         var progress = ((i + 1) / totalImages) * 100;
+//         var totalSizeGB = totalSizeMB / 1024;  // 将MB转换为GB
+//         print("Progress: " + progress.toFixed(2) + "%");
+//         print("Total size of Landsat images (GB):", totalSizeGB);
+//         print("Number of images processed:", i + 1);
+//       }
+//     }
+//   } else {
+//     print("No sizes found in the image collection.");
+//   }
+// });
+
+// // 可视化集合中的第一张图像
+// Map.centerObject(studyRegion, 10);
+// var firstImage = filteredLandsat.first();
+// Map.addLayer(firstImage, {bands: ['RED', 'GREEN', 'BLUE'], min: 0, max: 3000}, 'First Landsat Image');
+
+
+
+
+
+
+
+
+
+
+
+
+//显示和研究区域相交的所有图像的大小
+// 导入CCDC工具库
+var utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api');
+
+// 定义研究区域
+var studyRegion = ee.FeatureCollection("users/2404182135/TaiYuanNew").geometry();
+
+// 定义开始和结束日期及要使用的Landsat波段
+var startDate = '2000-01-01';
+var endDate = '2024-01-01';
+var bands = ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2'];
+
+// 检索和过滤Landsat图像
+var filteredLandsat = utils.Inputs.getLandsat({
+       collection: 2
+   })
+   .filterBounds(studyRegion)
+   .filterDate(startDate, endDate)
+   .select(bands);
+
+print("Number of images in collection:", filteredLandsat.size());
+
+// 函数：计算单个图像的大小
+function calculateImageSize(image) {
+  var bandNames = image.bandNames();
+  var stats = image.reduceRegion({
+    reducer: ee.Reducer.count(),
+    geometry: studyRegion,
+    scale: 30,
+    maxPixels: 1e9
+  });
+
+  // 计算所有波段的像素大小
+  var pixelCount = ee.Number(stats.get(bandNames.get(0), 0));
+  var totalBands = bandNames.size();
+  var imageSizeMB = pixelCount.multiply(totalBands).divide(1024).divide(1024);  // 每个波段的像素大小为1字节，转换为MB
+  return imageSizeMB;
+}
+
+// 计算图像集合的总大小
+var imageSizes = filteredLandsat.map(function(image) {
+  var size = calculateImageSize(image);
+  return image.set('sizeMB', size);
+});
+
+// 将大小集合转换为列表
+var sizeList = imageSizes.aggregate_array('sizeMB');
+
+// 计算总大小并输出阶段性进度
+sizeList.evaluate(function(sizes) {
+  if (sizes && sizes.length > 0) {
+    var totalImages = sizes.length;
+    var totalSizeMB = 0;
+    var step = Math.ceil(totalImages / 10);  // 每10%输出一次
+
+    for (var i = 0; i < totalImages; i++) {
+      totalSizeMB += sizes[i];
+
+      // 每完成一个阶段（10%、20%、...、100%）时输出进度
+      if ((i + 1) % step === 0 || i === totalImages - 1) {
+        var progress = ((i + 1) / totalImages) * 100;
+        var totalSizeGB = totalSizeMB / 1024;  // 将MB转换为GB
+        print("Progress: " + progress.toFixed(2) + "%");
+        print("Total size of Landsat images (GB):", totalSizeGB);
+        print("Number of images processed:", i + 1);
+      }
+    }
+  } else {
+    print("No sizes found in the image collection.");
+  }
+});
+
+// 可视化集合中的第一张图像
+Map.centerObject(studyRegion, 10);
+var firstImage = filteredLandsat.first();
+Map.addLayer(firstImage, {bands: ['RED', 'GREEN', 'BLUE'], min: 0, max: 3000}, 'First Landsat Image');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// // Set CCD params to use.
+// //定义CCDC参数，修改的唯一参数是断点带、日期格式和 lambda
+// var ccdParams={
+//   breakpointBands: ['GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2'],//这些波段在CCDC算法中用于检测时间序列数据中的“断点”或重大变化。
+//   tmaskBands: ['GREEN', 'SWIR2'],//用于为时态分析创建掩码，以排除可能是异常值或噪声的数据点，例如云和阴影
+//   minObservations: 6,
+//   chiSquareProbability: 0.99,
+//   minNumOfYearsScaler: 1.33,
+//   dateFormat: 1,
+//   lambda: 0.002,
+//   maxIterations: 10000,
+//   collection: filteredLandsat
+// };
+
+// // Run CCD.
+// var ccdResults=ee.Algorithms.TemporalSegmentation.Ccdc(ccdParams);
+// print(ccdResults);
+// Map.centerObject(ccdResults, 10);
+// //该变量可能包括一系列“部分”，其中每个部分代表土地覆盖相对稳定的时期，
+// //然后是发生重大变化的变化点。每个段可以包含描述
+// //指定波段内数据趋势的系数、均方根误差 （RMSE） 等统计数据以及检测到的变化时间。
+
+
+
+
+// //将CCDC输出结果导出到资产Assets，方便后续使用，这里标注False，暂时不导出
+// var exportResults=false
+// if (exportResults){
+//   // Create a metadata dictionary with the parameters and arguments used.
+//   //使用使用的参数和参数创建元数据字典。创建元数据字典以跟踪用于生成 ccdResults 的参数和设置。
+//   //这对于可重复性和理解数据的上下文至关重要。
+//   var metadata=ccdParams;
+//   metadata['breakpointBands']=
+//       metadata['breakpointBands'].toString();//检测断点的带。
+//   metadata['tmaskBands']=metadata['tmaskBands'].toString();//创建掩码的带
+//   metadata['startDate']=startDate;
+//   metadata['endDate']=endDate;
+//   metadata['bands']=bands.toString();//用于分析的条带。
+// }
+     
+     
+     
+     
+
+// //   //Export results, assigning the metadata as image properties.
+// //   //导出结果，将元数据指定为图像属性。
+// //   Export.image.toAsset({
+// //       image: ccdResults.set(metadata),
+// //       region: studyRegion,
+// //       pyramidingPolicy:{
+// //           ".default": 'sample'//金字塔。“样本”意味着聚合将获取数据样本，这通常适用于分类或离散数据，确保即使在较低分辨率下查看更改检测数据也能保持完整性。
+// //       },
+// //       scale: 30//空间分辨率
+// //   });
+// // }
+// // //将 pyramidingPolicy 的值设置为“sample”可确保输出中的所有波段都具有正确的策略。
+
+
+
+// // Section 3. Extracting Break Information
+// // 第3节.提取中断信息
+// //使用第三方模块调色板，它简化了调色板的可视化使用
+// //第一行调用一个库，该库将有助于可视化图像。
+// //第二行包含上一节中所示的 CCDC 运行的预计算结果的路径。
+// var palettes=require('users/gena/packages:palettes');
+
+
+
+
+
+
+
+// // // Define bands to use in classification
+// // var bands = params.Classification.bandNames
+
+// // // Define coefficients to use in classification
+// // var coefs = params.Classification.coefs
+
+// // // Segment ids
+// // var segs = params.Classification.segs
+
+// // // Property corresponding to year of training data
+// // var yearProperty = params.Classification.yearProperty
+// // var resultsPath=
+// //   'users/2404182135/CCDCNew2_5_2';
+// //   params.Classification.changeResults=ee.Image('users/2404182135/CCDCNew2_5_2');
+// // var ccdImage = utils.CCDC.buildCcdImage(params.Classification.changeResults, params.Classification.segs.length, params.Classification.bandNames)
+// // var ccdResults=ccdImage;
+// // print(ccdResults,'ccdResults');
+
+// var resultsPath=
+//   'users/2404182135/TaiYuanCCDC2024';
+
+// var ccdResults=ee.Image(resultsPath);//将CCDC结果加载为图像：此行从指定路径处的数据创建图像对象
+// Map.centerObject(ccdResults, 10);//将地图居中在图像上：缩放级别为 10
+// print('CCD Image:',ccdResults);//打印图像对象：此命令将 ccdResults 图像对象的属性输出到 Earth Engine 代码编辑器中的控制台。
+// //它可用于检查图像的属性，例如波段数、波段名称、属性、投影等，这有助于了解数据结构和元数据。
+
+
+
+
+
+// //变化带，这是CCDC算法的关键输出之一。
+// //选择包含中断时间信息的波段，并找到给定时间范围内的中断次数。
+// // Select time of break and change probability array images.
+// //选择中断时间并更改概率数组图像。
+// var change=ccdResults.select('tBreak');//从 CCDC 结果中选择 tBreak 波段。此波段包含检测到的变化（时间序列中的中断）的时间。
+// var changeProb=ccdResults.select('changeProb');//选择 changeProb 包含每个检测到的变化的概率的波段。值越高，表示更改检测的置信度越高。
+// print(change);
+// print(changeProb);
+// // Map.addLayer(changeProb,{
+// // }, 'changeProb');
+
+// // Set the time range we want to use and get as mask of
+// //设置我们要使用的时间范围并获取作为掩码
+// // places that meet the condition.
+// //符合条件的地方。
+// var start=2000-01-01;
+// var end=2024-01-01;
+// var mask=change.gt(start).and(change.lte(end)).and(changeProb.eq(
+// 1));//进一步细化掩码，仅包含概率等于 1 的更改，表示检测到的更改的置信度非常高。
+// //Map.addLayer(changeProb,{}, 'change prob');//此命令将 changeProb 图层添加到 GEE 界面的地图显示中。
+// //它可视化了整个研究区域检测到的变化的概率，
+
+// //Obtain the number of breaks for the time range.
+// //获取时间范围的中断次数。
+// var numBreaks=mask.arrayReduce(ee.Reducer.sum(), [0]);//获取时间范围内的中断次数
+// // Map.addLayer(numBreaks,{ //可视化中断次数
+// //   min: 0,
+// //   max: 5
+// // }, 'Number of breaks');
+// //使用此代码，我们定义要使用的时间范围，然后生成一个掩码，
+// //该掩码将指示图像数组中在该范围内检测到中断的所有位置，
+// //这些位置也满足变化概率为 1 的条件，从而有效地消除一些虚假中断。
+// //对于每个像素，我们可以计算掩码检索有效结果的次数，指示 CCDC 检测到的中断次数。
+// //在加载图层中，看起来更亮的地方将显示更多的断裂
+// print(numBreaks)
+
+
+
+
+
+
+
+
+
+
+
+
+        
+        
+
+
+
+
+
+
+// //对于变化较多的地方，
+// //可视化第一次或最后一次记录中断的时间有助于了解景观中发生的变化动态。
+// // Obtain the first change in that time period.
+// //获取该时间段内的第一个更改。
+// var dates=change.arrayMask(mask).arrayPad([1]);
+// var firstChange=dates
+//   .arraySlice(0, 0, 1)
+//   .arrayFlatten([
+//       ['firstChange']
+//   ])
+//   .selfMask();
+
+// var timeVisParams={
+//   palette: palettes.colorbrewer.YlOrRd[9],
+//   min: start,
+//   max: end
+// };
+// //Map.addLayer(firstChange, timeVisParams, 'First change');
+
+// // Obtain the last change in that time period.
+// //获取该时间段内的最后一次更改。
+// var lastChange=dates
+//   .arraySlice(0, -1)
+//   .arrayFlatten([
+//       ['lastChange']
+//   ])
+//   .selfMask();
+// //Map.addLayer(lastChange, timeVisParams, 'Last change');
+
+
+
+
+
+
+
+
+
+
+
+
+// // 假设您的图像为myImage
+// var bandNames = lastChange.bandNames();  
+
+// var arrayImage = lastChange.toArray();
+// var flattenImage = arrayImage.arrayFlatten([bandNames]);
+// var myImage_double = flattenImage.toDouble();
+// // Map.addLayer(myImage_double,{ //可视化中断次数
+// //   min: 0,
+// //   max: 5
+// // }, 'flattenImage');
+
+
+
+// //Map.addLayer(lastChange, timeVisParams, 'First change');
+
+
+
+// Export.image.toAsset({  
+//       image:myImage_double,   
+//       //description: indexs[i], 
+//       //assetId: indexs[i],  // 确保使用正确的参数名称
+//       scale: 30,  // 分辨率为30米
+//       region: studyRegion,  // 指定研究区
+//       maxPixels: 1e13,  // 最大像素数
+       
+//       crs: "EPSG:4326"  // 设置投影为WGS84
+//   });
+
+
+
+
+
+
+
+
+
+// //使用 arrayMask 通过使用我们之前创建的掩码来仅保留满足我们条件的更改日期
+// //使用函数 arrayPad 来填充或“填充”那些没有经历任何变化的像素，因此在 tBreak 波段中没有值
+// //选择数组中的第一个或最后一个值，并将图像从一维数组转换为常规图像，以便使用自定义调色板对其应用可视化效果
+// //使用震级波段来可视化在我们选择的时间段内发生的地点和时间CCDC记录的最大变化
+// //使用 SWIR1 波段的变化幅度，以与之前相同的方式屏蔽它并填充它。
+// // Get masked magnitudes.
+// //获得遮蔽的量级。
+// var magnitudes=ccdResults
+//   .select('SWIR1_magnitude')//从CCDC结果中选择短波红外1（SWIR1）波段的变化幅度。
+//   .arrayMask(mask)//应用先前定义的掩码，仅保留与所选时间范围内的更改相对应的数据，并满足某些条件（例如，高概率更改）
+//   .arrayPad([1]);//在数组的开头和结尾处填充一个元素的缓冲区。这样做通常是为了在索引时处理边缘情况，或在屏蔽后保持一致的数组长度。
+
+
+// // Get index of max abs magnitude of change.
+// //得到指标的最大abs变化幅度
+// //取绝对值,一旦我们找到最大绝对值，我们就会找到它在数组上的位置，
+// //然后使用该索引提取原始幅度值，以及中断发生的时间。
+// var maxIndex=magnitudes
+//   .abs()//取变化幅度的绝对值，以平等地考虑正变化和负变化。
+//   .arrayArgmax()//查找数组中最大值的索引，该索引对应于检测到的最显著更改。
+//   .arrayFlatten([//展平数组结构以使其更易于使用，从而生成一个 2D 数组，其中“index”是第二个维度的标签。
+//       ['index']
+//   ]);
+
+// // Select max magnitude and its timing
+// //选择最大幅度及其时序
+// var selectedMag=magnitudes.arrayGet(maxIndex);//检索最大变化指数处的变化幅度值。
+// var selectedTbreak=dates.arrayGet(maxIndex).selfMask();//获取最大变化幅度的相应中断日期。
+// //selfMask() ：单独遮罩图像以隐藏任何没有数据的像素，通常是在之前可能引入“无数据”值的处理步骤之后。
+
+// //magVisParams ：设置可视化参数，包括调色板和要显示的值范围。
+// var magVisParams={
+//   palette: palettes.matplotlib.viridis[7],//调色板
+//   min: -0.15,
+//   max: 0.15
+// };
+// //Map.addLayer(selectedMag, magVisParams, 'Max mag');
+// //Map.addLayer(selectedTbreak, timeVisParams, 'Time of max mag');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// // // // Section 4. Extracting Coefficients Manually
+// // // // 第4节.手动提取系数
+
+
+
+
+// // //土地覆被分类。每个时间段都可以描述为一个谐波函数，具有截距、斜率和三对正弦和余弦项
+// // //允许时间段表示在不同时间尺度上发生的季节性。
+// // //这些系数以及通过比较每个预测值和实际 Landsat 值获得的均方根误差 （RMSE） 是在运行 CCDC 算法时生成的。
+// // //以下示例将演示如何检索与特定日期相交的线段的截距系数。
+// // // land cover classification
+// var palettes=require('users/gena/packages:palettes');//调色板
+
+// var resultsPath=
+//   'users/2404182135/TaiYuanCCDC';
+// var ccdResults=ee.Image(resultsPath);
+// Map.centerObject(ccdResults, 10);
+// print(ccdResults);
+
+// // Display segment start and end times.
+// //显示区段开始和结束时间。
+// var start=ccdResults.select('tStart');
+// var end=ccdResults.select('tEnd');
+// // Map.addLayer(start,{
+// //   min: 1999,
+// //   max: 2001
+// // }, 'Segment start');
+// // Map.addLayer(end,{
+// //   min: 2010,
+// //   max: 2020
+// // }, 'Segment end');
+
+
+
+
+
+// // 假设你的Shapefile已经上传并命名为'users/your_username/BeijingBoundary'
+// var TaiYuanCustom = ee.FeatureCollection('users/2404182135/TaiYuanNew');
+// // 可视化和打印
+// Map.centerObject(TaiYuanCustom, 8);
+// Map.addLayer(TaiYuanCustom, {color: 'white'}, 'Custom Beijing Boundary');
+// print('Custom Beijing Feature Collection:', TaiYuanCustom);
+
+
+
+
+// // //使用 studyRegion 裁剪 changeProb 图层
+// // var clippedstart = start.clip(studyRegion);
+
+// // // 使用 studyRegion 裁剪 numBreaks 图层
+// // var clippedend = end.clip(studyRegion);
+
+// // // 将裁剪后的 changeProb 图层添加到地图显示
+// // Map.addLayer(clippedstart,{
+// //   min: 1999,
+// //   max: 2001
+// // }, 'Segment start');
+// // //将裁剪后的 numBreaks 图层添加到地图显示
+// // Map.addLayer(clippedend,{
+// //   min: 2010,
+// //   max: 2020
+// // }, 'Segment end');
+
+
+
+
+
+
+// // // 检查控制台并展开打印图像信息中的波段部分。我们将使用 tStart、tEnd 和 SWIR1_coefs 波段
+// // // 它们是数组图像，包含时间段开始的日期、日期时间段结束的日期以及 SWIR1 波段中每个段的系数
+// // // 运行上面的代码并将地图切换到卫星模式。使用检查器，单击图像上的任意位置，注意打印的日期数及其多个单击像素的值
+// // // 对于森林覆盖率稳定的地方，tStart 通常有一个值，tEnd 有一个值。
+// // // 这意味着对于那些更稳定的地方，CCDC只拟合了一个时间段。
+// // // 另一方面，对于底图中具有可见变换的地点，日期数通常为 2 或 3 个，这意味着该算法分别拟合了两个或三个时间段。
+
+// // // 为了简化数据的处理，我们可以选择单个段来提取其系数。
+
+// // // Find the segment that intersects a given date.
+// // //查找与给定日期相交的线段。
+// // var targetDate=2015.5;
+// // var selectSegment=start.lte(targetDate).and(end.gt(targetDate));
+// // Map.addLayer(selectSegment,{}, 'Identified segment');
+
+
+
+
+
+
+// // //我们设置了一个感兴趣的时间，在本例中为 2005 年年中
+// // //然后我们找到满足在该日期之前开始和之后结束的条件的段。
+// // //再次使用检查器，单击不同的位置并验证输出。满足条件的段的值为 1，其他段的值为 0
+// // //我们可以使用以下代码使用此信息来选择该段的系数：
+
+// // // Get all coefs in the SWIR1 band.
+// // //获取 SWIR1 频段中的所有 coef。
+// // var SWIR1Coefs=ccdResults.select('SWIR1_coefs');
+// // Map.addLayer(SWIR1Coefs,{}, 'SWIR1 coefs');
+
+// // // Select only those for the segment that we identified previously.
+// // //仅为我们之前确定的区段选择那些。
+// // var sliceStart=selectSegment.arrayArgmax().arrayFlatten([
+// //   ['index']
+// // ]);
+// // var sliceEnd=sliceStart.add(1);
+// // var selectedCoefs=SWIR1Coefs.arraySlice(0, sliceStart, sliceEnd);
+// // Map.addLayer(selectedCoefs,{}, 'Selected SWIR1 coefs');
+// // //在上面的一段代码中，我们首先选择具有 SWIR1 波段系数的阵列图像。
+// // //然后，使用我们之前创建的图层，我们找到条件为真的位置，并使用它来提取该段的系数。
+
+
+
+
+
+// // //最后，我们现在拥有的是与2005年中点相交的那段线段的全套系数。
+// // //系数按以下顺序排列：截距、斜率、余弦 1、正弦 1、余弦 2、正弦 2、余弦 3 和正弦 3。
+// // //在本练习中，我们将使用以下代码提取截距系数（图 4.7.4），它是数组中的第一个元素：
+
+// // // Retrieve only the intercept coefficient.
+// // //仅检索截距系数。
+// // var intercept=selectedCoefs.arraySlice(1, 0, 1).arrayProject([1]);
+// // var intVisParams={
+// //   palette: palettes.matplotlib.viridis[7],
+// //   min: -6,
+// //   max: 6
+// // };
+// // Map.addLayer(intercept.arrayFlatten([
+// //   ['INTP']
+// // ]), intVisParams, 'INTP_SWIR1');
+
+
+
+
+
+
+
+
+
+
+
+// // //Section 5. Extracting Coefficients Using External Functions
+// // //第5节.使用外部函数提取系数
+
+
+// // //上一节中生成的代码允许我们提取单个日期的单个系数。
+// // //我们通常希望提取一组多个系数和波段，这些系数和波段可以用作其他工作流（例如分类）的输入。
+// // //为了简化该过程，我们将使用在第 2 节中看到的相同函数库。
+
+// // //在本节中，我们将提取和可视化单个日期的不同系数，并使用同一日期的多个光谱波段的截距系数生成 RGB 图像。
+// // //第一步是确定感兴趣的日期，并将CCDC结果从阵列图像转换为常规的多波段图像，以便于操作和更快地显示。
+
+// // // Load the required libraries.
+// // //加载所需的库。
+// // var palettes=require('users/gena/packages:palettes');
+// // var utils=require(
+// //   'users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api');
+
+// // // Load the results.
+// // //加载结果
+// // var resultsPath=
+// //   'users/2404182135/BeiJingCCDC';
+// // var ccdResults=ee.Image(resultsPath);
+// // Map.centerObject(ccdResults, 10);
+
+// // // Convert a date into fractional years.
+// // //将日期转换为小数年。
+// // var inputDate='2005-09-25';
+// // var dateParams={
+// //   inputFormat: 3,//指定输入日期的格式。在这里，“3”可能对应于实用程序库识别的特定日期格式。
+// //   inputDate: inputDate,//感兴趣的实际日期
+// //   outputFormat: 1//这表示输出日期所需的格式。“1”可能是 CCDC 算法所需的另一种特定日期格式。
+// // };
+
+// // //从导入 utils 的库中调用函数，将日期从给定的输入格式转换为输出格式。此函数使用dateParams定义的参数。
+// // //formattedDate ：将转换后的日期存储为适合CCDC算法使用的格式。
+// // var formattedDate=utils.Dates.convertDate(dateParams);
+
+
+// // // Band names originally used as inputs to the CCD algorithm.
+// // //波段名称最初用作 CCD 算法的输入。
+// // // CCDC 算法输入的光谱波段
+// // var BANDS=['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2'];
+
+// // // Names for the time segments to retrieve.
+// // //要检索的时间段的名称。
+// // var SEGS=['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9',
+// //   'S10'
+// // ];
+
+// // // Transform CCD results into a multiband image.
+// // //将CCD结果转换为多波段图像。这种格式更易于用于可视化和进一步分析。
+// // var ccdImage=utils.CCDC.buildCcdImage(ccdResults, SEGS.length,
+// //   BANDS);
+// // print(ccdImage);
+
+// // //在上面的代码中，我们定义了感兴趣的日期 （2005-09-25），并将其转换为我们运行 CCDC 的日期格式
+// // //该格式对应于小数年。之后，我们指定用作 CCDC 算法输入的频段。
+// // //最后，我们指定将分配给时间段的名称，列表长度表示每个像素要检索的最大时间段数。
+// // //之所以完成此步骤，是因为 CCDC 生成的结果存储为可变长度数组。
+// // //请求预定义的最大段数可确保多波段图像的结构是已知的，并极大地方便了其操作和显示。
+
+// // //设置这些变量后，我们调用一个函数，将结果转换为具有多个波段的图像，
+// // //该波段表示请求的段、输入波段和系数的组合。
+
+// // //最后，为了提取所需波段的系数子集，我们可以使用导入库中的函数，称为 getMultiCoefs。
+
+
+// // // Define bands to select.
+// // //定义要选择的波段。
+// // var SELECT_BANDS=['RED', 'GREEN', 'NIR',  'SWIR1', 'SWIR2'];
+
+// // // Define coefficients to select.
+// // //定义要选择的系数。
+// // // This list contains all possible coefficients, and the RMSE
+// // //此列表包含所有可能的系数和 RMSE
+// // var SELECT_COEFS=['INTP', 'SLP', 'RMSE','COS','COS2','COS3','SIN','SIN2','SIN3'];
+
+// // // Obtain coefficients.
+// // //获取系数的函数
+// // var coefs=utils.CCDC.getMultiCoefs(
+// //   ccdImage, formattedDate, SELECT_BANDS, SELECT_COEFS, true,
+// //   SEGS, 'after');
+// // print(coefs);
+
+// // // Show a single coefficient.
+// // //显示单个系数。
+// // var slpVisParams={
+// //   palette: palettes.matplotlib.viridis[7],
+// //   min: -0.0005,
+// //   max: 0.005
+// // };
+// // //Map.addLayer(coefs.select('RED_SLP'), slpVisParams,'RED SLOPE 2005-09-25');
+
+// // var rmseVisParams={
+// //   palette: palettes.matplotlib.viridis[7],
+// //   min: 0,
+// //   max: 0.1
+// // };
+
+// // //Map.addLayer(coefs.select('NIR_RMSE'), rmseVisParams,'NIR RMSE 2005-09-25');
+
+// // // Show an RGB with three coefficients.
+// // //显示具有三个系数的 RGB。
+// // var rgbVisParams={
+// //   bands: ['RED_INTP', 'GREEN_INTP', 'NIR_INTP'],
+// //   min: 0,
+// //   max: 0.1
+// // };
+// // //Map.addLayer(coefs, rgbVisParams, 'RGB 2005-09-25');
+
+// //对于斜坡，高正值是明亮的，而大负值是非常暗的。
+// //剩下的大部分森林是稳定的，坡度接近于零，
+// //而经历过转变并显示出农业活动的区域往往在红色波段具有正坡度，在图像中看起来很亮。
+// //同样，对于RMSE图像，稳定的森林呈现出更可预测的表面反射率时间序列
+// //这些时间序列被时间段更忠实地捕获，因此呈现较低的RMSE值，在图像中显得更暗。
+// //农业区域呈现出更嘈杂的时间序列，建模更具挑战性，并导致更高的RMSE值，看起来更亮。
+
+
+// //截距是针对截获我们请求的日期的时间段的中间点计算的，表示所选段跨度的平均反射率。
+// //从这个意义上说，当它们一起显示为 RGB 图像时，它们类似于所选日期的合成图像，具有始终无云的优点。

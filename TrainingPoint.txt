@@ -1,0 +1,62 @@
+////////////////////////////////////////////////////////////////////////
+//
+//   Land cover and land cover change classification using CCDC
+//
+//   Step 1. Organize training data and attach CCDC coefficients
+//           and ancillary data (predictors) to every feature
+// 
+//   Instructions: Fill out parameter specifications 1-6 and Run. Please
+//                 read each parameter description to know how to proceed.
+//
+//   Author: Eric Bullock
+//   bullocke@bu.edu  
+//
+//////////// ////////////////////////////////////////////////////////////
+
+
+// Load example parameter file
+var utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api')
+var params = require('users/parevalo_bu/gee-ccdc-tools:Tutorial/params.js')
+
+var trainingData = ee.FeatureCollection(params.Classification.trainingPath)
+print('First training point: ', trainingData.first())
+
+trainingData  = trainingData.map(function(feat) {
+ return feat.set('year',2014)})
+
+// Define bands to use in classification
+var bands = params.Classification.bandNames
+
+// Define coefficients to use in classification
+var coefs = params.Classification.coefs
+
+// Segment ids
+var segs = params.Classification.segs
+
+// Property corresponding to year of training data
+var yearProperty = params.Classification.yearProperty
+
+var ccdImage = utils.Classification.loadResults(params.Classification.resultFormat, 
+  params.Classification.changeResults,params.StudyRegion)
+  
+print('CCD Image:', ccdImage)
+
+// Finally, get ancillary topographic and elevation data
+var ancillary = utils.Inputs.getAncillary()
+
+
+var trainingData = utils.Classification.getTrainingCoefsAtDate(
+      trainingData, coefs, bands, yearProperty, ancillary, ccdImage, segs)
+
+// Filter points with no data
+var testBand = params.Classification.bandNames[0] + '_' + params.Classification.coefs[0]
+trainingData = trainingData.filter(ee.Filter.notNull([testBand]))
+    
+print('First training point with predictors:', trainingData.first())
+
+Export.table.toAsset({
+  collection: trainingData,
+  description: 'trainingDataProcessed',
+  assetId: params.Classification.trainingPathPredictors})
+
+

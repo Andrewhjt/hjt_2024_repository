@@ -1,0 +1,201 @@
+var utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/api')
+
+
+// Define parameters
+
+// Change detection parameters
+var changeDetection = {
+  breakpointBands: ['GREEN','RED','NIR','SWIR1','SWIR2'],
+  tmaskBands: ['GREEN','SWIR1'],
+  minObservations: 6,
+  chiSquareProbability: .99,
+  minNumOfYearsScaler: 1.33,
+  dateFormat: 2,
+  lambda: 20/10000,
+  maxIterations: 25000
+}
+
+
+// Classification parameters
+var classification = {
+  bandNames: ['GREEN','RED','NIR','SWIR1','SWIR2'],
+  inputFeatures: ["INTP", "SLP","PHASE","RMSE"],
+  coefs: ["INTP", "SLP","COS", "SIN","RMSE","COS2","SIN2","COS3","SIN3"],
+  ancillaryFeatures: ["ELEVATION","ASPECT","DEM_SLOPE","RAINFALL","TEMPERATURE"],
+  resultFormat: 'SegCollection',
+  classProperty: 'landcover',
+  yearProperty: 'year',
+  classifier: ee.Classifier.smileRandomForest,
+  classifierParams: {
+    numberOfTrees: 150,
+    variablesPerSplit: null,
+    minLeafPopulation: 1,
+    bagFraction: 0.5,
+    maxNodes: null
+  },
+  outPath: 'projects/GLANCE/RESULTS/CLASSIFICATION/VERSION_1',
+  segs: ["S1", "S2", "S3", "S4", "S5", "S6"],
+  trainingPath: 'users/2404182135/TrainingPointALL_5_8',
+  trainingPathPredictors: 'users/2404182135/TrainingPointGEENew2',
+}
+
+var studyRegion = ee.FeatureCollection('users/2404182135/TaiYuanNew')
+  
+
+var params = {
+  start: '2000-01-01',
+  end: '2024-01-01',
+  ChangeDetection: changeDetection,
+  Classification: classification,
+  StudyRegion: studyRegion
+}
+
+// Filter by date and a location in Brazil
+var filteredLandsat = utils.Inputs.getLandsat()
+    .filterBounds(studyRegion)
+    .filterDate(params.start, params.end)
+    .select(params.Classification.bandNames)
+
+print(filteredLandsat.size())
+
+
+
+
+
+
+params.ChangeDetection['collection'] = filteredLandsat
+
+var results = ee.Algorithms.TemporalSegmentation.Ccdc(params.ChangeDetection)
+print(results)
+
+
+
+
+//这段代码可能有问题，用下面那一段
+// //第 2 部分：准备训练数据
+// // Define bands to use in classification
+// var bands = params.Classification.bandNames
+
+// // Define coefficients to use in classification
+// var coefs = params.Classification.coefs
+
+// // Segment ids
+// var segs = params.Classification.segs
+
+// // Property corresponding to year of training data
+// var yearProperty = params.Classification.yearProperty
+
+// // Define path to change detection results
+// params.Classification.changeResults = results
+
+// // Load ccd image stack with coefficients and change information
+// var ccdImage = utils.CCDC.buildCcdImage(params.Classification.changeResults, params.Classification.segs.length, params.Classification.bandNames)
+
+// print('CCD Image:', ccdImage)
+
+// // Finally, get ancillary topographic and climate data
+// var ancillary = utils.Inputs.getAncillary()
+
+
+
+
+
+// var exportResults=true
+// if (exportResults){
+//   // Create a metadata dictionary with the parameters and arguments used.
+//   //使用使用的参数和参数创建元数据字典。创建元数据字典以跟踪用于生成 ccdResults 的参数和设置。
+//   //这对于可重复性和理解数据的上下文至关重要。
+//   var metadata=changeDetection;
+//   metadata['breakpointBands']=metadata['breakpointBands'].toString();//检测断点的带。
+//   metadata['tmaskBands']=metadata['tmaskBands'].toString();//创建掩码的带
+//   metadata['startDate']='2000-01-01';
+//   metadata['endDate']='2024-01-01';
+//   metadata['bands']=params.Classification.bandNames.toString();//用于分析的条带。
+    
+     
+//   //Export results, assigning the metadata as image properties.
+//   //导出结果，将元数据指定为图像属性。
+//   Export.image.toAsset({
+//       image: ccdImage.set(metadata),
+//       region: studyRegion,
+//       pyramidingPolicy:{
+//           ".default": 'sample'//金字塔。“样本”意味着聚合将获取数据样本，这通常适用于分类或离散数据，确保即使在较低分辨率下查看更改检测数据也能保持完整性。
+//       },
+//       scale: 30,//空间分辨率
+//       priority: 10,
+//   });
+// }
+// //将 pyramidingPolicy 的值设置为“sample”可确保输出中的所有波段都具有正确的策略。
+
+
+
+
+
+
+
+// // trainingData = utils.Classification.remapLC(
+// //     trainingData, 'Class', 'Class',['Bare','Developed','Forest','Herbaceous','Shrub','Snow/Ice','Water'],[1,2,3,4,5,6,7],[1,2,3])
+// // print(trainingData.aggregate_histogram('Class'))
+
+
+
+
+// // trainingData  = trainingData.map(function(feat) {
+// //   return feat.set('year',2014)})
+  
+  
+  
+  
+  
+// Define bands to use in classification
+var bands = params.Classification.bandNames
+
+// Define coefficients to use in classification
+var coefs = params.Classification.coefs
+
+// Segment ids
+var segs = params.Classification.segs
+
+// Property corresponding to year of training data
+var yearProperty = params.Classification.yearProperty
+
+// Define path to change detection resultsCCDC只是ccdImage计算的一部分
+ params.Classification.changeResults = ee.Image('users/2404182135/CCDCNew2_5_2')
+ Map.centerObject(params.Classification.changeResults, 10);
+// Load ccd image stack with coefficients and change information
+//这里要将CCDC，Segs，BandNames这三个结合
+var ccdImage = utils.CCDC.buildCcdImage(params.Classification.changeResults, params.Classification.segs.length, params.Classification.bandNames)
+
+
+
+// Finally, get ancillary topographic and climate data
+var ancillary = utils.Inputs.getAncillary()
+
+// // var resultsPath=
+// //   'users/2404182135/TaiYuanCCDC';
+// // var ccdImage=ee.Image(resultsPath);//将CCDC结果加载为图像：此行从指定路径处的数据创建图像对象
+// // Map.centerObject(ccdImage, 10);//将地图居中在图像上：缩放级别为 10
+// // print('CCD Image:',ccdImage);//打印图像对象：此命令将 ccdResults 图像对象的属性输出到 Earth Engine 代码编辑器中的控制台。
+// // //它可用于检查图像的属性，例如波段数、波段名称、属性、投影等，这有助于了解数据结构和元数据。
+
+// print('CCD Image:', ccdImage)
+
+
+
+var trainingData = ee.FeatureCollection(params.Classification.trainingPath)
+print(trainingData.first())
+
+var trainingData = utils.Classification.getTrainingCoefsAtDate(
+  trainingData, coefs, bands, yearProperty, ancillary, ccdImage, segs)
+
+
+// Filter points with no data
+var testBand = params.Classification.bandNames[0] + '_' + params.Classification.coefs[0]
+trainingData = trainingData.filter(ee.Filter.notNull([testBand]))
+
+print('First training point with predictors:', trainingData.first())
+
+Export.table.toAsset({
+  collection: trainingData,
+  description: 'trainingDataProcessed',
+  assetId: params.Classification.trainingPathPredictors})

@@ -1,0 +1,905 @@
+/**
+ * 
+ * Interface for easy submission of a CCDC task
+ * 
+ * Author: Eric Bullock (bullocke@bu.edu)
+ * 
+ * Please cite as:
+ * Arévalo, P., Bullock, E.L., Woodcock, C.E., Olofsson, P., 2020. 
+ * A Suite of Tools for Continuous Land Change Monitoring in Google Earth Engine. 
+ * Front. Clim. 2. https://doi.org/10.3389/fclim.2020.576740
+ * 
+ * Additional credits: Zhiqiang Yang, and Noel Gorelick. 
+ * 
+*/ 
+
+ 
+var utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/inputs.js')
+var ccdc_utils = require('users/parevalo_bu/gee-ccdc-tools:ccdcUtilities/ccdc.js')
+
+var composite = require("users/google/toolkits:landcover/impl/composites.js").Composites
+
+
+/**
+ * Define visualization parameters. 
+ * 
+ * The first dictionary contains the parameters
+ * for titles, the second contains the style for the 'Run CCDC' button.
+ */ 
+var visLabels = {
+  fontWeight: 'bold', 
+  fontSize: '14px', 
+  width: '590px',
+  padding: '4px 4px 4px 4px',
+  border: '1px solid black',
+  color: 'white',
+  backgroundColor: 'black',
+  textAlign: 'left'
+  }
+
+var runStyle = {
+  fontWeight: 'bold', 
+  fontSize: '14px', 
+  width: '590px',
+  padding: '4px 4px 4px 4px',
+  border: '1px solid black',
+  color: 'black',
+  backgroundColor: 'white',
+  textAlign: 'center'
+  }  
+  
+var sensor = 'landsat'
+
+/**
+ * Global GLANCE land grid. 
+ * 
+ * This feature collection contains the grid system
+ * for all continents for areas that overlap with land. 
+ * More information on GLANCE and the grid can be found here: 
+ *  http://sites.bu.edu/measures/
+ */ 
+var grids = ee.FeatureCollection('projects/GLANCE/GRIDS/GEOG_LAND/GLANCE_v01_GLOBAL_TILE_LAND')
+
+
+
+/**
+ * Panels to hold the ui.Widgets. 
+ * 
+ * There is a main panel that holds everything, and then a second panel called
+ * geoPanel that holds the options for selecting the output extent. 
+ */ 
+var mainPanel = ui.Panel({style: {width: '600px'}})
+.add(ui.Label('Continuous Change Detection and Classification (CCDC)',visLabels))
+.add(ui.Label('User interface for submitting CCDC'))
+.add(ui.Label('Please see instructions'))
+.add(ui.Label('Input Parameters',visLabels))
+
+ui.root.add(mainPanel)
+
+var geoPanel = ui.Panel()
+
+
+/**
+ * Define global variables. 
+ * 
+ * These make it easier for interacting between ui.Widgets.
+ */ 
+var outGeo, outGeos, outGeosSize, tool, drive, asset
+var h = 0
+var v = 0
+var r = 0
+var geoType = 0
+var regionList = ['Select Method','Draw on Map','Single Tile','Tile Intersecting Point','Multiple Tiles','Draw Multiple Tiles on Map']
+
+
+/**
+ * Draw a box on the map
+ * 
+ * Written by Justin Braaten (I think): https://emapr.github.io/LT-GEE/
+ * https://code.earthengine.google.com/82b08b69bd596ada4747cb4bb7ea9526
+ * 
+ * This function allows you to click on the map and after 5 clicks, the
+ * locations and joined, making a Polygon. This polygon can be used as the
+ * geographic extent of the analysis. 
+ */ 
+var DrawAreaTool = function() {
+  var map = Map
+  var drawingToolLayer = ui.Map.Layer({name: 'Area Selection Tool', visParams: {palette:'#4A8BF4', color:'#4A8BF4' }});
+
+  this.map = map;
+  this.selection = null;
+  this.active = false;
+  this.points = [];
+  this.area = null;
+  
+  this.listeners = [];
+
+  var tool = this;
+  
+  this.initialize = function() {
+    this.map.onClick(this.onMouseClick);
+    map.layers().reset()
+    map.layers().set(0, drawingToolLayer);
+  };
+  
+  this.startDrawing = function() {
+    this.active = true;
+    this.points = [];
+
+    this.map.style().set('cursor', 'crosshair');
+    drawingToolLayer.setShown(true);
+  };
+  
+  this.stopDrawing = function() {
+    tool.active = false;
+    tool.map.style().set('cursor', 'hand');
+
+    if(tool.points.length < 2) {
+      return;
+    }
+
+    var closedPoints = tool.points.slice(0,-1);
+    tool.area = ee.Geometry.Polygon(closedPoints)///.bounds();
+    
+    var empty = ee.Image().byte();
+    var test = empty.paint({
+      featureCollection: ee.FeatureCollection(tool.area),
+      color: 1,
+      width: 4
+    });
+  
+    drawingToolLayer.setEeObject(test);
+
+    tool.listeners.map(function(listener) {
+      listener(tool.area);
+    });
+    runButton.widgets().get(0).setDisabled(false)
+    runButton.widgets().get(0).style().set('backgroundColor','#5ab4ac')
+
+  };
+  
+  this.onMouseClick = function(coords) {
+    if(!tool.active) {
+      return;
+    }
+    
+    tool.points.push([coords.lon, coords.lat]);
+
+    var geom = tool.points.length > 1 ? ee.Geometry.LineString(tool.points) : ee.Geometry.Point(tool.points[0]);
+    drawingToolLayer.setEeObject(geom);
+
+    if(tool.points.length > 4) {
+      tool.stopDrawing();
+    }
+  };
+  
+  this.onFinished = function(listener) {
+    tool.listeners.push(listener);
+  };
+  
+  this.initialize();
+};
+
+/**
+ * Helper function for drawing output extent. 
+ * 
+ * This function faciliates the drawing of the output extent using the
+ * DrawAreaTool() function. 
+ */ 
+function doAreaTool() {
+  geoPanel.add(ui.Label('Slowly click five points on the map and the application will generate a rectangle for the output extent geometry.'))
+  tool = new DrawAreaTool();
+  tool.startDrawing();
+  tool.onFinished(function(geometry) {
+    outGeo = ee.Feature(geometry);
+  });
+  
+}
+
+/**
+ * Helper function for drawing output extent and finding overlapping tiles
+ * 
+ * This function faciliates the drawing of the output extent using the
+ * DrawAreaTool() function. 
+ */ 
+function drawMultipleTiles() {
+  geoPanel.add(ui.Label('Slowly click five points on the map and the application will generate a rectangle for the output extent geometry.'))
+  tool = new DrawAreaTool();
+  tool.startDrawing();
+  tool.onFinished(function(geometry) {
+    var tempGeo = grids.filterBounds(geometry);
+
+    tempGeo.size().evaluate(function(val) {
+      if (val > 0) {
+        outGeos = ee.FeatureCollection(tempGeo)
+        Map.addLayer(outGeos, {},'Output Geometry')
+        Map.centerObject(outGeos)
+        runButton.widgets().get(0).setDisabled(false)
+        runButton.widgets().get(0).style().set('backgroundColor','#5ab4ac')
+        outGeosSize = val
+      } else {
+        print('No overlapping tiles found!')
+      }
+    })
+  })
+  
+}
+
+
+
+/**
+ * Specify a single tile. 
+ * 
+ * This function filters the GLANCE global grid based on the users
+ * input properties in the GUI. 
+ */ 
+function doSingleTile() {
+  geoPanel.add(singleTilePanel)
+
+  var tempGeo
+  var validateTile = ui.Button('Load Tile', function(){
+    h = Number(singleTilePanel.widgets().get(3).getValue())
+    v = Number(singleTilePanel.widgets().get(1).getValue())
+    r = String(singleTilePanel.widgets().get(5).getValue())
+    tempGeo = grids.filterMetadata('horizontal','equals',h)
+      .filterMetadata('vertical','equals',v)
+      .filterMetadata('zone','equals',r)
+
+    tempGeo.size().evaluate(function(val) { 
+      if (val > 0) {
+        outGeo = ee.Feature(tempGeo.first())
+        runButton.widgets().get(0).setDisabled(false)
+        runButton.widgets().get(0).style().set('backgroundColor','#5ab4ac')
+        Map.addLayer(outGeo, {},'Output Geometry')
+        Map.centerObject(outGeo)
+      }
+      else {
+        print('No Tile Found!')
+      }
+    })
+  })
+  geoPanel.add(validateTile)
+}
+
+/**
+ * Find a single tile by clicking on the map. 
+ * 
+ * This function filters the GLANCE global grid based on the intersection of
+ * a point clicked on the map. 
+ */ 
+function doPoint() {
+  var hasClicked = false
+  Map.style().set('cursor', 'crosshair');
+  geoPanel.add(ui.Label('Click a location on the map to load the intersecting tile'))
+  Map.onClick(function(coords) {
+    Map.layers().reset()
+    var latitude = coords.lat
+    var longitude = coords.lon
+    var point = ee.Geometry.Point([longitude, latitude])
+    var tempGeo = grids.filterBounds(point)
+    
+    Map.layers().set(0, point)
+    // Map.layers().set(1, outGeo)
+    
+    tempGeo.size().evaluate(function(val) { 
+      if (val > 0) {
+        outGeo = ee.Feature(tempGeo.first())
+        runButton.widgets().get(0).setDisabled(false)
+        runButton.widgets().get(0).style().set('backgroundColor','#5ab4ac')
+        Map.addLayer(outGeo, {},'Output Geometry')
+        Map.centerObject(outGeo)
+        Map.unlisten()
+      }
+   })
+
+  })
+}
+
+/**
+ * Specify a range of tiles. 
+ * 
+ * This function filters the GLANCE global grid based on a range of
+ * the users input properties in the GUI. 
+ */ 
+function doMultipleTiles() {
+  geoPanel.add(multiplePanelStart)
+  geoPanel.add(multiplePanelEnd)
+
+  var tempGeo
+  var validateTile = ui.Button('Load Tiles', function(){
+    var h1 = Number(multiplePanelStart.widgets().get(3).getValue())
+    var v1 = Number(multiplePanelStart.widgets().get(1).getValue())
+    
+    var h2 = Number(multiplePanelEnd.widgets().get(3).getValue())
+    var v2 = Number(multiplePanelEnd.widgets().get(1).getValue())
+
+    var r = String(multiplePanelStart.widgets().get(5).getValue())
+    tempGeo = grids.filterMetadata('horizontal','greater_than',h1)
+      .filterMetadata('horizontal','less_than',h2)
+      .filterMetadata('vertical','greater_than',v1)
+      .filterMetadata('vertical','less_than',v2)
+      .filterMetadata('zone','equals',r)
+
+    tempGeo.size().evaluate(function(val) {
+      if (val > 0) {
+        outGeos = ee.FeatureCollection(tempGeo)
+        Map.addLayer(outGeos, {},'Output Geometry')
+        Map.centerObject(outGeos)
+        runButton.widgets().get(0).setDisabled(false)
+        runButton.widgets().get(0).style().set('backgroundColor','#5ab4ac')
+        outGeosSize = val
+      } else if (val === 0) {
+        print('No Tile Found!')
+      }
+    })
+  })
+  geoPanel.add(validateTile)
+}
+
+/**
+ * Turn an array image into a band image
+ *
+ */
+var arrayToImage = function(array, band) {
+  var zeros = ee.Array(0).repeat(0, 1)
+  var img = array.select(band).arrayCat(zeros, 0).float().arraySlice(0, 0, 1)
+  return img.arrayFlatten([[band]])
+}
+
+
+/**
+ * Run CCDC and save results.  
+ * 
+ * This function filters the GLANCE global grid based on a range of
+ * the users input properties in the GUI. 
+ */ 
+var doCcdc = function() {
+  Map.layers().reset()
+  
+  var minDate = String(dates.widgets().get(1).getValue()).split('-')[0]
+  var maxDate = String(dates.widgets().get(3).getValue()).split('-')[0]
+  var years = maxDate - minDate
+  
+  if (sensor == 'landsat') {
+    var landsatParams = {
+      start: String(dates.widgets().get(1).getValue()),
+      end: String(dates.widgets().get(3).getValue()),
+      region: outGeo.geometry(),
+      startDOY: Number(doys.widgets().get(1).getValue()),
+      endDOY: Number(doys.widgets().get(3).getValue()),
+      sensors: {
+        l4: landsats.widgets().get(1).getValue(),
+        l5: landsats.widgets().get(2).getValue(),
+        l7: landsats.widgets().get(3).getValue(),
+        l8: landsats.widgets().get(4).getValue()
+      }
+    }
+    var inputData = ee.ImageCollection(utils.getLandsat(landsatParams)).filterBounds(outGeo.geometry())
+
+  } else {
+    var s1Data = ee.ImageCollection(utils.getS1()).filterBounds(outGeo.geometry())
+    if (s1s.widgets().get(1).getValue()) {
+      var inputData = s1Data.filterMetadata('orbitProperties_pass','equals','ASCENDING')
+    } else if (s1s.widgets().get(2).getValue()) {
+      var inputData = s1Data.filterMetadata('orbitProperties_pass','equals','DESCENDING')
+    } else if (s1s.widgets().get(3).getValue()) {
+      var inputData = s1Data.filterMetadata('orbitProperties_pass','equals','ASCENDING')
+      inputData = composite.createTemporalComposites(
+        inputData, 
+        ee.Date(String(dates.widgets().get(1).getValue()))
+        , years*26, 2, 'week', ee.Reducer.mean())
+        .filterDate(
+          ee.Date(String(dates.widgets().get(1).getValue())), 
+          ee.Date(String(dates.widgets().get(3).getValue())))
+    } else if (s1s.widgets().get(4).getValue()) {
+      var inputData = s1Data.filterMetadata('orbitProperties_pass','equals','DESCENDING')
+      inputData = composite.createTemporalComposites(
+        inputData, 
+        ee.Date(String(dates.widgets().get(1).getValue()))
+        , years*26, 2, 'week', ee.Reducer.mean())
+    } else  {
+      var inputData = composite.createTemporalComposites(
+        s1Data, 
+        ee.Date(String(dates.widgets().get(1).getValue()))
+        , years*26, 2, 'week', ee.Reducer.mean())
+    }
+  }
+  inputData = inputData.filterDate(
+          ee.Date(String(dates.widgets().get(1).getValue())), 
+          ee.Date(String(dates.widgets().get(3).getValue())))
+  print('Number of input images:', inputData.size())
+  
+  if (maskImage.widgets().get(1).getValue()) {
+    var validMask = ee.Image(maskImage.widgets().get(1).getValue()).eq(1)
+    inputData = inputData.map(function(im) {
+      return im.updateMask(validMask)
+    })
+    // Map.addLayer(inputData.first(), {}, 'first')
+  }
+  
+  var bpB = String(breakpointBands.widgets().get(1).getValue()).trim().split(/\s*,\s*/);
+  
+  if (tmaskBands.widgets().get(1).getValue()) {
+    var tmB = String(tmaskBands.widgets().get(1).getValue()).trim().split(/\s*,\s*/);  
+  } else {
+    var tmB = null
+  }
+  var ccdcParameters = {
+    breakpointBands: bpB,
+    tmaskBands: tmB,
+    minObservations: Number(minObservations.widgets().get(1).getValue()),
+    chiSquareProbability: Number(chiSquareProbability.widgets().get(1).getValue()),
+    minNumOfYearsScaler: Number(minNumOfYearsScaler.widgets().get(1).getValue()),
+    dateFormat: Number(dateFormat.widgets().get(1).getValue()),
+    lambda: Number(lambda.widgets().get(1).getValue()),
+    maxIterations: Number(maxIterations.widgets().get(1).getValue()),
+    collection: inputData,
+  }
+
+  var outputParams = {
+    start: String(dates.widgets().get(1).getValue()),
+    end: String(dates.widgets().get(3).getValue()),
+    startDOY: Number(doys.widgets().get(1).getValue()),
+    endDOY: Number(doys.widgets().get(3).getValue()),
+    sensor: sensor,
+    breakpointBands: ccdcParameters.breakpointBands,
+    tmaskBands: ccdcParameters.tmaskBands,
+    minObservations: ccdcParameters.minObservations,
+    chiSquareProbability:ccdcParameters.chiSquareProbability,
+    minNumOfYearsScaler: ccdcParameters.minNumOfYearsScaler,
+    dateFormat: ccdcParameters.dateFormat,
+    lambda: ccdcParameters.lambda,
+    maxIterations: ccdcParameters.maxIterations,
+    user: ee.data.getAssetRoots()[0].id.split('/')[1]
+  }
+
+  var drive = outputFormat.widgets().get(1).getValue()
+  var asset = outputFormat.widgets().get(2).getValue()
+
+  var results = ee.Algorithms.TemporalSegmentation.Ccdc(ccdcParameters)
+  
+  // var changeMag = arrayToImage(results, 'VH_magnitude').selfMask()
+  // var changeImg = arrayToImage(results, 'tBreak').updateMask(changeMag.abs().gt(1))
+
+  // Map.addLayer(changeImg, {min: minDate, max: maxDate, palette: ['yellow','orange',/**/'red']}, 'Change Date')
+  // Map.addLayer(changeMag, {}, 'VH Magnitude', false)
+
+  
+  var outFolder = String(outputFolder.widgets().get(1).getValue()) + '/'
+  var outAsset = 'ccdc_output_' + r + '_' + h + '_' + v
+  var outDesc = outAsset + '_asset'
+  var exportBands = ['BLUE','GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
+  var imageToExport = ee.Image(ccdc_utils.buildCcdImage(results, 3, exportBands))
+
+  
+  if (drive) {
+    Export.image.toDrive({
+      // 'Long' version of CCDC results, required when exporting to drive
+      image: imageToExport,
+      scale: 30,
+      region: outGeo.geometry(),
+      
+    })
+  } 
+  if (asset == true) {
+  //   print('here')
+    Export.image.toAsset({
+      // Ensures we export the original CCDC array image
+      image: results.setMulti(outputParams),
+      description: outDesc,
+      assetId: outFolder + outAsset,
+      scale: 30,
+      region: outGeo.geometry(),
+      pyramidingPolicy: {
+        ".default": 'sample'
+      }
+      
+    })
+  }
+}
+
+
+
+/**
+ * Panels containing ui.Widgets  
+ * 
+ * Each panel has atleast one widget to define how CCDC is run. Many
+ * contain a label and a textbox (indices 0 and 1), while buttons and
+ * checkboxes may not contain label widgets. 
+ */ 
+var dates = ui.Panel(
+  [
+    ui.Label({value:'startDate:', style:{color:'black'}}),
+    ui.Textbox({value:'2015-01-01', style:{stretch: 'horizontal'}}),
+    ui.Label({value:'endDate:', style:{color:'black'}}),
+    ui.Textbox({value:'2021-01-01', style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+var doys = ui.Panel(
+  [
+    ui.Label({value:'startDOY:', style:{color:'black'}}),
+    ui.Textbox({value:'1', style:{stretch: 'horizontal'}}),
+    ui.Label({value:'endDOY:', style:{color:'black'}}),
+    ui.Textbox({value:'365', style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+var maskImage = ui.Panel(
+  [
+    ui.Label({value:'Mask Image (1=Valid; optional):', style:{color:'black'}}),
+    ui.Textbox({value:null, style:{stretch: 'horizontal'}}),
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+
+var switchBandsLandsat = function(check) {
+  if (check) {
+    breakpointBands.widgets().get(1).setValue(['GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2'])
+    tmaskBands.widgets().get(1).setValue(['GREEN','SWIR2'])
+    sensor = 'landsat'
+  }
+}
+
+var landsats = ui.Panel(
+  [
+    ui.Label({value:'Landsats:', style:{color:'black'}}),
+    ui.Checkbox({label:'L4', value: true, onChange: switchBandsLandsat, style:{stretch: 'horizontal'}}),
+    ui.Checkbox({label:'L5', value: true, onChange: switchBandsLandsat, style:{stretch: 'horizontal'}}),
+    ui.Checkbox({label:'L7', value: true, onChange: switchBandsLandsat, style:{stretch: 'horizontal'}}),
+    ui.Checkbox({label:'L8', value: true, onChange: switchBandsLandsat, style:{stretch: 'horizontal'}}),
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+var switchBandsS1 = function() {
+  breakpointBands.widgets().get(1).setValue(['VV','VH','ratio'])
+  tmaskBands.widgets().get(1).setValue(null)
+  sensor = 's1'
+}
+
+var turnOffS1_1 = function(check) {
+  if (check) {
+    switchBandsS1()
+    s1s.widgets().get(2).setValue(false)
+    s1s.widgets().get(3).setValue(false)
+    s1s.widgets().get(4).setValue(false)
+    landsats.widgets().get(1).setDisabled(true)
+    landsats.widgets().get(2).setDisabled(true)
+    landsats.widgets().get(3).setDisabled(true)
+    landsats.widgets().get(4).setDisabled(true)
+    landsats.widgets().get(1).setValue(false)
+    landsats.widgets().get(2).setValue(false)
+    landsats.widgets().get(3).setValue(false)
+    landsats.widgets().get(4).setValue(false)
+  }  else {
+    // switchBandsLandsat()
+    landsats.widgets().get(1).setDisabled(false)
+    landsats.widgets().get(2).setDisabled(false)
+    landsats.widgets().get(3).setDisabled(false)
+    landsats.widgets().get(4).setDisabled(false)
+  }
+}
+
+var turnOffS1_2 = function(check) {
+  if (check) {
+    switchBandsS1()
+    s1s.widgets().get(1).setValue(false)
+    s1s.widgets().get(3).setValue(false)
+    s1s.widgets().get(4).setValue(false)
+    landsats.widgets().get(1).setDisabled(true)
+    landsats.widgets().get(2).setDisabled(true)
+    landsats.widgets().get(3).setDisabled(true)
+    landsats.widgets().get(4).setDisabled(true)
+    landsats.widgets().get(1).setValue(false)
+    landsats.widgets().get(2).setValue(false)
+    landsats.widgets().get(3).setValue(false)
+    landsats.widgets().get(4).setValue(false)
+  }  else {
+    // switchBandsLandsat()
+    landsats.widgets().get(1).setDisabled(false)
+    landsats.widgets().get(2).setDisabled(false)
+    landsats.widgets().get(3).setDisabled(false)
+    landsats.widgets().get(4).setDisabled(false)
+  }
+}
+
+var turnOffS1_3 = function(check) {
+  if (check) {
+    switchBandsS1()
+    s1s.widgets().get(1).setValue(false)
+    s1s.widgets().get(2).setValue(false)
+    s1s.widgets().get(4).setValue(false)
+    landsats.widgets().get(1).setDisabled(true)
+    landsats.widgets().get(2).setDisabled(true)
+    landsats.widgets().get(3).setDisabled(true)
+    landsats.widgets().get(4).setDisabled(true)
+    landsats.widgets().get(1).setValue(false)
+    landsats.widgets().get(2).setValue(false)
+    landsats.widgets().get(3).setValue(false)
+    landsats.widgets().get(4).setValue(false)
+  }  else {
+    // switchBandsLandsat()
+    landsats.widgets().get(1).setDisabled(false)
+    landsats.widgets().get(2).setDisabled(false)
+    landsats.widgets().get(3).setDisabled(false)
+    landsats.widgets().get(4).setDisabled(false)
+  }
+}
+
+var turnOffS1_4 = function(check) {
+  if (check) {
+    switchBandsS1()
+    s1s.widgets().get(1).setValue(false)
+    s1s.widgets().get(2).setValue(false)
+    s1s.widgets().get(3).setValue(false)
+    landsats.widgets().get(1).setDisabled(true)
+    landsats.widgets().get(2).setDisabled(true)
+    landsats.widgets().get(3).setDisabled(true)
+    landsats.widgets().get(4).setDisabled(true)
+    landsats.widgets().get(1).setValue(false)
+    landsats.widgets().get(2).setValue(false)
+    landsats.widgets().get(3).setValue(false)
+    landsats.widgets().get(4).setValue(false)
+  }  else {
+    // switchBandsLandsat()
+    landsats.widgets().get(1).setDisabled(false)
+    landsats.widgets().get(2).setDisabled(false)
+    landsats.widgets().get(3).setDisabled(false)
+    landsats.widgets().get(4).setDisabled(false)
+  }
+}
+var s1s = ui.Panel(
+  [
+    ui.Label({value:'Sentinel 1:', style:{color:'black'}}),
+    ui.Checkbox({label:'GRD (Raw; Ascending)', value: false, onChange: turnOffS1_1, style:{stretch: 'horizontal'}}),
+    ui.Checkbox({label:'GRD (Raw; Descending)', value: false, onChange: turnOffS1_2, style:{stretch: 'horizontal'}}),
+    ui.Checkbox({label:'GRD (Composite; Ascending)', value: false, onChange: turnOffS1_3, style:{stretch: 'horizontal'}}),
+    ui.Checkbox({label:'GRD (Composite; Descending)', value: false, onChange: turnOffS1_4, style:{stretch: 'horizontal'}}),
+    ui.Checkbox({label:'GRD (Composite; Both)', value: false, onChange: turnOffS1_4, style:{stretch: 'horizontal'}}),
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+
+var outputFormat = ui.Panel(
+  [
+    ui.Label({value:'Export format:', style:{color:'black'}}),
+    ui.Checkbox({label:'GDrive', value: false, style:{stretch: 'horizontal'}}),
+    ui.Checkbox({label:'Asset', value: true, style:{stretch: 'horizontal'}}),
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+var outputFolder = ui.Panel(
+  [
+    ui.Label({value:'Export folder:', style:{color:'black'}}),
+    ui.Textbox({placeholder:'projects/GLANCE/RESULTS/CHANGEDETECTION/NA', value: 'projects/GLANCE/RESULTS/CHANGEDETECTION/NA', style:{stretch: 'horizontal'}}),
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+var regions = ['Select Region','AF','AN','AS','EU','NA','OC','SA']
+var singleTilePanel = ui.Panel(
+  [
+    ui.Label({value:'Vertical #:', style:{color:'black'}}),
+    ui.Textbox({value:32, style:{stretch: 'horizontal'}}),
+    ui.Label({value:'Horizontal #:', style:{color:'black'}}),
+    ui.Textbox({value:61, style:{stretch: 'horizontal'}}) ,
+    ui.Label({value:'Region', style:{color:'black'}}),
+    ui.Select({items:regions,value: regions[5], style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+var multiplePanelStart = ui.Panel(
+  [
+    ui.Label({value:'Vertical # Min:', style:{color:'black'}}),
+    ui.Textbox({value:30, style:{stretch: 'horizontal'}}),
+    ui.Label({value:'Horizontal # Min:', style:{color:'black'}}),
+    ui.Textbox({value:60, style:{stretch: 'horizontal'}}),
+    ui.Label({value:'Region', style:{color:'black'}}),
+    ui.Select({items:regions,value: regions[0], style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+var multiplePanelEnd = ui.Panel(
+  [
+    ui.Label({value:'Vertical # Max:', style:{color:'black'}}),
+    ui.Textbox({value:35, style:{stretch: 'horizontal'}}),
+    ui.Label({value:'Horizontal # End:', style:{color:'black'}}),
+    ui.Textbox({value:65, style:{stretch: 'horizontal'}}),
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+var breakpointBands = ui.Panel(
+  [
+    ui.Label({value:'breakpointBands:', style:{color:'black'}}),
+    ui.Textbox({value:['GREEN, RED, NIR, SWIR1, SWIR2'], style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+var tmaskBands = ui.Panel(
+  [
+    ui.Label({value:'tmaskBands:', style:{color:'black'}}),
+    ui.Textbox({value:['GREEN, SWIR2'], style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+var minObservations = ui.Panel(
+  [
+    ui.Label({value:'minObservations:', style:{color:'black'}}),
+    ui.Textbox({value:5, style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+var chiSquareProbability = ui.Panel(
+  [
+    ui.Label({value:'chiSquareProbability:', style:{color:'black'}}),
+    ui.Textbox({value:0.90, style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+var minNumOfYearsScaler = ui.Panel(
+  [
+    ui.Label({value:'minNumOfYearsScaler:', style:{color:'black'}}),
+    ui.Textbox({value:1.33, style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+var dateFormat = ui.Panel(
+  [
+    ui.Label({value:'dateFormat:', style:{color:'black'}}),
+    ui.Textbox({value:1, style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+var lambda = ui.Panel(
+  [
+    ui.Label({value:'lambda:', style:{color:'black'}}),
+    ui.Textbox({value:0.005, style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+var maxIterations = ui.Panel(
+  [
+    ui.Label({value:'maxIterations:', style:{color:'black'}}),
+    ui.Textbox({value:40000, style:{stretch: 'horizontal'}}) 
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+var regionFuncs = [doAreaTool, doSingleTile, doPoint, doMultipleTiles, drawMultipleTiles]
+var selectRegion = ui.Panel(
+  [
+    ui.Label({value:'Define Study Region:', style:{color:'black'}}),
+    ui.Select({
+      value: 'Select Method',
+      items: regionList,
+      onChange: function(obj) {
+        geoPanel.clear()
+        Map.unlisten()
+        Map.layers().reset()
+        runButton.widgets().get(0).style().set('backgroundColor','white')
+        runButton.widgets().get(0).setDisabled(true)
+
+        var index = regionList.indexOf(obj) - 1
+        geoType= index
+
+        var regionFunc = regionFuncs[index]
+        regionFunc(obj)
+      }
+    })
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+var runButton = ui.Panel(
+  [
+    ui.Button({label:'Run CCDC', style:runStyle, disabled: true}),
+  ],
+  ui.Panel.Layout.Flow('horizontal'),
+  {stretch: 'horizontal'}
+);
+
+
+/**
+ * Add individual panels to the main panel. 
+ */ 
+mainPanel.add(dates)
+mainPanel.add(doys)
+mainPanel.add(maskImage)
+mainPanel.add(landsats)
+mainPanel.add(s1s)
+
+mainPanel.add(ui.Label('CCDC Parameters',visLabels))
+mainPanel.add(breakpointBands)
+mainPanel.add(tmaskBands)
+mainPanel.add(minObservations)
+mainPanel.add(chiSquareProbability)
+mainPanel.add(minNumOfYearsScaler)
+mainPanel.add(dateFormat)
+mainPanel.add(lambda)
+mainPanel.add(maxIterations)
+mainPanel.add(ui.Label('Define Output Extent',visLabels))
+mainPanel.add(selectRegion)
+mainPanel.add(geoPanel)
+mainPanel.add(ui.Label('Output Options',visLabels))
+mainPanel.add(outputFormat)
+mainPanel.add(outputFolder)
+mainPanel.add(runButton)
+
+
+/**
+ * Run CCDC and save the results. 
+ * 
+ * When the 'Run CCDC' button is clicked, either submit
+ * a single task via the doCcdc() function or a task
+ * for each tile is multiple are defined. 
+ */ 
+runButton.widgets().get(0).onClick(function() {
+  // geoTypes indexed by 'Select Method' widget values
+  // 0 and 1 are single features
+  // 2 is tile intersecting point
+  // 3-4 are multiple tiles
+  print(geoType)
+  if (geoType < 3) {
+      doCcdc()
+  } else if (geoType == 3) {
+      var h_temp = outGeo.get('horizontal')
+      var v_temp  = outGeo.get('vertical')
+      var r_temp = outGeo.get('zone')
+      var listToEvaluate = ee.List([h_temp, v_temp, r_temp])
+      listToEvaluate.evaluate(function(obj) {
+        h = obj[0]
+        v = obj[1]
+        r = obj[2]
+        doCcdc()
+      })
+  } else {
+    var outGeosList = outGeos.toList(100);
+
+    for (var i =0; i< outGeosSize; i++) {
+      outGeo = ee.Feature(outGeosList.get(i))
+      var h_temp = outGeo.get('horizontal')
+      var v_temp  = outGeo.get('vertical')
+      var r_temp = outGeo.get('zone')
+      var listToEvaluate = ee.List([h_temp, v_temp, r_temp, i])
+      listToEvaluate.evaluate(function(obj) {
+        h = obj[0]
+        v = obj[1]
+        r = obj[2]
+        outGeo = ee.Feature(outGeosList.get(obj[3]))
+
+        doCcdc()
+      })
+    }
+  }
+})
+
+
+
+// users/bullocke/amazon/public/madreDeDiosFNF
+// JAXA/ALOS/PALSAR/YEARLY/FNF/2015
